@@ -1,0 +1,20 @@
+[package]
+name = "mush"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ratatui = { version = "0.30.0", features = [] }
+crossterm = { version = "0.29.0" }
+color-eyre = { version = "0.6.5" }
+serde = { version = "1.0.228", features = ["derive"] }
+toml = { version = "1.1.2+spec-1.1.0", features = ["serde"] }
+anyhow = {version = "1.0.102"}
+
+
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "z"
+strip = true
