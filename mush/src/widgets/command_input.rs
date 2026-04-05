@@ -9,6 +9,7 @@ pub struct CommandInput {
     pub buffer: String,
     pub cursor: usize,
     pub cwd: String,
+    pub valid_command: bool,
 }
 
 impl Default for CommandInput {
@@ -20,6 +21,7 @@ impl Default for CommandInput {
             buffer: String::new(),
             cursor: 0,
             cwd,
+            valid_command: true,
         }
     }
 }
@@ -127,6 +129,12 @@ impl Widget for &CommandInput {
                 .style(Style::default().fg(Color::DarkGray));
             placeholder.render(inner, buf);
         } else {
+            let text_color = if self.valid_command {
+                Color::White
+            } else {
+                Color::Red
+            };
+
             let before_cursor = &self.buffer[..self.cursor];
             let at_cursor = self.buffer[self.cursor..]
                 .chars()
@@ -140,12 +148,12 @@ impl Widget for &CommandInput {
             };
 
             let line = Line::from(vec![
-                Span::raw(before_cursor),
+                Span::styled(before_cursor, Style::default().fg(text_color)),
                 Span::styled(
                     at_cursor,
                     Style::default().bg(Color::White).fg(Color::Black),
                 ),
-                Span::raw(after_cursor),
+                Span::styled(after_cursor, Style::default().fg(text_color)),
             ]);
             Paragraph::new(line).render(inner, buf);
         }

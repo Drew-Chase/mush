@@ -1,4 +1,5 @@
 mod config;
+mod shell;
 mod widgets;
 
 use std::env::set_current_dir;

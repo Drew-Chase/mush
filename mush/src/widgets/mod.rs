@@ -1,12 +1,15 @@
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::{DefaultTerminal, Frame};
+use std::time::Instant;
 
 pub mod command_history;
 pub mod command_input;
 
 use command_history::{CommandEntry, CommandHistory};
 use command_input::CommandInput;
+
+use crate::shell;
 
 #[derive(Debug)]
 pub struct App {
@@ -108,14 +111,18 @@ impl App {
 
                 // Submit command
                 (_, KeyCode::Enter) => {
-                    let _command = self.input.take_buffer();
-                    self.input.update_cwd();
-                    // TODO: execute the command and add entry to history
+                    self.execute_command();
                 }
 
                 // Text editing
-                (_, KeyCode::Backspace) => self.input.backspace(),
-                (_, KeyCode::Delete) => self.input.delete(),
+                (_, KeyCode::Backspace) => {
+                    self.input.backspace();
+                    self.validate_input();
+                }
+                (_, KeyCode::Delete) => {
+                    self.input.delete();
+                    self.validate_input();
+                }
                 (_, KeyCode::Left) => self.input.move_left(),
                 (_, KeyCode::Right) => self.input.move_right(),
                 (_, KeyCode::Home) => self.input.home(),
@@ -124,6 +131,7 @@ impl App {
                 // Character input
                 (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                     self.input.insert_char(c);
+                    self.validate_input();
                 }
 
                 // Scroll history
@@ -137,6 +145,94 @@ impl App {
         }
 
         Ok(())
+    }
+
+    fn execute_command(&mut self) {
+        let raw_input = self.input.take_buffer();
+        let trimmed = raw_input.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        let command_display = trimmed.to_string();
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        let args = &parts[1..];
+
+        let start = Instant::now();
+
+        match shell::resolve_command(trimmed) {
+            shell::CommandKind::Builtin(cmd) => {
+                let result = shell::builtins::execute(cmd, args);
+                let duration = start.elapsed();
+
+                if !result.output.is_empty() {
+                    self.history.add_entry(CommandEntry {
+                        command: command_display,
+                        output: result.output,
+                        duration,
+                        exit_code: 0,
+                    });
+                }
+
+                if result.change_dir.is_some() {
+                    self.input.update_cwd();
+                }
+
+                if result.exit_app {
+                    self.exit = true;
+                }
+            }
+            shell::CommandKind::External(path) => {
+                let output = std::process::Command::new(&path)
+                    .args(args)
+                    .output();
+                let duration = start.elapsed();
+
+                match output {
+                    Ok(out) => {
+                        let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                            .lines()
+                            .map(String::from)
+                            .collect();
+                        let stderr_lines: Vec<String> = String::from_utf8_lossy(&out.stderr)
+                            .lines()
+                            .map(String::from)
+                            .collect();
+                        lines.extend(stderr_lines);
+
+                        self.history.add_entry(CommandEntry {
+                            command: command_display,
+                            output: lines,
+                            duration,
+                            exit_code: out.status.code().unwrap_or(-1),
+                        });
+                    }
+                    Err(e) => {
+                        self.history.add_entry(CommandEntry {
+                            command: command_display,
+                            output: vec![format!("error: {e}")],
+                            duration,
+                            exit_code: -1,
+                        });
+                    }
+                }
+            }
+            shell::CommandKind::NotFound => {
+                self.history.add_entry(CommandEntry {
+                    command: command_display.clone(),
+                    output: vec![format!("command not found: {command_display}")],
+                    duration: start.elapsed(),
+                    exit_code: 127,
+                });
+            }
+        }
+
+        self.input.valid_command = true;
+        self.input.update_cwd();
+    }
+
+    fn validate_input(&mut self) {
+        self.input.valid_command = shell::is_valid_command(&self.input.buffer);
     }
 
     fn input_scroll_up(&mut self) {

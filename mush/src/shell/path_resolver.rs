@@ -1,0 +1,106 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+
+static PATH_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> = OnceLock::new();
+
+fn cache() -> &'static Mutex<HashMap<String, Option<PathBuf>>> {
+    PATH_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[allow(dead_code)]
+pub fn invalidate_cache() {
+    if let Some(c) = PATH_CACHE.get()
+        && let Ok(mut map) = c.lock()
+    {
+        map.clear();
+    }
+}
+
+pub fn is_executable(name: &str) -> bool {
+    find_in_path(name).is_some()
+}
+
+pub fn find_in_path(name: &str) -> Option<PathBuf> {
+    let lower = name.to_lowercase();
+
+    // Check cache first
+    if let Ok(map) = cache().lock()
+        && let Some(cached) = map.get(&lower)
+    {
+        return cached.clone();
+    }
+
+    let result = search_path(&lower);
+
+    // Store in cache
+    if let Ok(mut map) = cache().lock() {
+        map.insert(lower, result.clone());
+    }
+
+    result
+}
+
+fn search_path(name: &str) -> Option<PathBuf> {
+    let path_var = std::env::var("PATH").ok()?;
+    let dirs = std::env::split_paths(&path_var);
+
+    // Determine which extensions to try
+    let extensions = get_extensions(name);
+
+    for dir in dirs {
+        if extensions.is_empty() {
+            // Name already has an extension or we're on Unix
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        } else {
+            for ext in &extensions {
+                let candidate = dir.join(format!("{name}{ext}"));
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+            // Also try the bare name
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+/// Returns the list of extensions to try when searching for an executable.
+/// On Windows, uses PATHEXT; on other platforms, returns empty (no extensions needed).
+fn get_extensions(name: &str) -> Vec<String> {
+    // If the name already has an extension, don't append more
+    if name.contains('.') {
+        return Vec::new();
+    }
+
+    #[cfg(windows)]
+    {
+        if let Ok(pathext) = std::env::var("PATHEXT") {
+            pathext
+                .split(';')
+                .map(|s| s.to_lowercase())
+                .collect()
+        } else {
+            vec![
+                ".exe".to_string(),
+                ".cmd".to_string(),
+                ".bat".to_string(),
+                ".com".to_string(),
+                ".ps1".to_string(),
+            ]
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
