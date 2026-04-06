@@ -19,6 +19,8 @@ Cargo.lock
 .idea/**/dbnavigator.xml
 .idea/**/gradle.xml
 .idea/**/libraries
+.idea/dataSources*
+nul
 cmake-build-*/
 .idea/**/mongoSettings.xml
 *.iws
