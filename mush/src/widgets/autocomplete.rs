@@ -1,16 +1,22 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Widget};
 
 use crate::shell;
 
 const MAX_VISIBLE: usize = 10;
 
+#[derive(Debug, Clone)]
+pub struct Suggestion {
+    pub name: String,
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct Autocomplete {
-    pub suggestions: Vec<String>,
+    pub suggestions: Vec<Suggestion>,
     pub selected: usize,
     pub visible: bool,
 }
@@ -31,18 +37,28 @@ impl Autocomplete {
         }
 
         let query_lower = query.to_lowercase();
-        let mut matches: Vec<(String, i32)> = shell::all_command_names()
+        let mut matches: Vec<(Suggestion, i32)> = shell::all_commands()
             .into_iter()
-            .filter_map(|name| {
-                let score = fuzzy_score(&query_lower, &name.to_lowercase());
-                if score > 0 { Some((name.to_string(), score)) } else { None }
+            .filter_map(|info| {
+                let score = fuzzy_score(&query_lower, &info.name.to_lowercase());
+                if score > 0 {
+                    Some((
+                        Suggestion {
+                            name: info.name,
+                            description: info.description,
+                        },
+                        score,
+                    ))
+                } else {
+                    None
+                }
             })
             .collect();
 
         // Sort by score descending, then alphabetically
-        matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.name.cmp(&b.0.name)));
 
-        self.suggestions = matches.into_iter().map(|(name, _)| name).collect();
+        self.suggestions = matches.into_iter().map(|(s, _)| s).collect();
         self.selected = 0;
         self.visible = !self.suggestions.is_empty();
     }
@@ -65,7 +81,7 @@ impl Autocomplete {
 
     pub fn accept(&mut self) -> Option<String> {
         if self.visible && self.selected < self.suggestions.len() {
-            let result = self.suggestions[self.selected].clone();
+            let result = self.suggestions[self.selected].name.clone();
             self.close();
             Some(result)
         } else {
@@ -104,18 +120,45 @@ impl Widget for &Autocomplete {
             0
         };
 
+        // Calculate the inner width for description alignment
+        // area.width - 2 for borders - 2 for padding
+        let inner_width = area.width.saturating_sub(4) as usize;
+
         let items: Vec<ListItem> = self.suggestions
             .iter()
             .enumerate()
             .skip(scroll_start)
             .take(visible_count)
-            .map(|(i, name)| {
-                let style = if i == self.selected {
-                    Style::default().bg(Color::DarkGray).fg(Color::White)
+            .map(|(i, suggestion)| {
+                let is_selected = i == self.selected;
+                let bg = if is_selected { Color::DarkGray } else { Color::Reset };
+
+                let line = if let Some(desc) = &suggestion.description {
+                    // Truncate description to fit
+                    let name_len = suggestion.name.len();
+                    let sep = "  ";
+                    let available = inner_width.saturating_sub(name_len + sep.len());
+                    let truncated = if desc.len() > available && available > 3 {
+                        format!("{}...", &desc[..available.saturating_sub(3)])
+                    } else if desc.len() > available {
+                        desc[..available].to_string()
+                    } else {
+                        desc.clone()
+                    };
+
+                    Line::from(vec![
+                        Span::styled(&suggestion.name, Style::default().fg(Color::White).bg(bg)),
+                        Span::styled(sep, Style::default().bg(bg)),
+                        Span::styled(truncated, Style::default().fg(Color::DarkGray).bg(bg)),
+                    ])
                 } else {
-                    Style::default().fg(Color::White)
+                    Line::styled(
+                        suggestion.name.as_str(),
+                        Style::default().fg(Color::White).bg(bg),
+                    )
                 };
-                ListItem::new(Line::styled(name.as_str(), style))
+
+                ListItem::new(line)
             })
             .collect();
 

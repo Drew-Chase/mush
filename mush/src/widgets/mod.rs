@@ -13,6 +13,12 @@ use command_input::CommandInput;
 
 use crate::shell;
 
+struct ExecResult {
+    output: Vec<String>,
+    exit_code: i32,
+    exit_app: bool,
+}
+
 #[derive(Debug)]
 pub struct App {
     pub history: CommandHistory,
@@ -192,40 +198,73 @@ impl App {
         }
 
         let command_display = trimmed.to_string();
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        let args = &parts[1..];
-
         let start = Instant::now();
 
         match shell::resolve_command(trimmed) {
-            shell::CommandKind::Builtin(cmd) => {
-                let result = shell::builtins::execute(cmd, args);
+            shell::CommandKind::Alias(commands) => {
+                let mut all_output: Vec<String> = Vec::new();
+                for cmd in &commands {
+                    let result = self.execute_single(cmd);
+                    all_output.extend(result.output);
+                    if result.exit_app {
+                        self.exit = true;
+                        break;
+                    }
+                }
                 let duration = start.elapsed();
-
-                if !result.output.is_empty() {
+                if !all_output.is_empty() || !commands.is_empty() {
                     self.history.add_entry(CommandEntry {
                         command: command_display,
-                        output: result.output,
+                        output: all_output,
                         duration,
                         exit_code: 0,
                     });
                 }
-
-                if result.change_dir.is_some() {
-                    self.input.update_cwd();
-                }
-
+            }
+            other => {
+                let result = self.dispatch_resolved(other, trimmed);
+                let duration = start.elapsed();
+                self.history.add_entry(CommandEntry {
+                    command: command_display,
+                    output: result.output,
+                    duration,
+                    exit_code: result.exit_code,
+                });
                 if result.exit_app {
                     self.exit = true;
                 }
             }
-            shell::CommandKind::External(path) => {
-                let output = std::process::Command::new(&path)
-                    .args(args)
-                    .output();
-                let duration = start.elapsed();
+        }
 
-                match output {
+        self.input.valid_command = true;
+        self.input.update_cwd();
+    }
+
+    /// Execute a single command string (used by alias expansion).
+    fn execute_single(&mut self, input: &str) -> ExecResult {
+        let resolved = shell::resolve_command(input);
+        self.dispatch_resolved(resolved, input)
+    }
+
+    /// Dispatch an already-resolved command kind.
+    fn dispatch_resolved(&mut self, kind: shell::CommandKind, input: &str) -> ExecResult {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+        let args = if parts.len() > 1 { &parts[1..] } else { &[] };
+
+        match kind {
+            shell::CommandKind::Builtin(cmd) => {
+                let result = shell::builtins::execute(cmd, args);
+                if result.change_dir.is_some() {
+                    self.input.update_cwd();
+                }
+                ExecResult {
+                    output: result.output,
+                    exit_code: 0,
+                    exit_app: result.exit_app,
+                }
+            }
+            shell::CommandKind::External(path) => {
+                match std::process::Command::new(&path).args(args).output() {
                     Ok(out) => {
                         let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
                             .lines()
@@ -236,36 +275,46 @@ impl App {
                             .map(String::from)
                             .collect();
                         lines.extend(stderr_lines);
-
-                        self.history.add_entry(CommandEntry {
-                            command: command_display,
+                        ExecResult {
                             output: lines,
-                            duration,
                             exit_code: out.status.code().unwrap_or(-1),
-                        });
+                            exit_app: false,
+                        }
                     }
-                    Err(e) => {
-                        self.history.add_entry(CommandEntry {
-                            command: command_display,
-                            output: vec![format!("error: {e}")],
-                            duration,
-                            exit_code: -1,
-                        });
+                    Err(e) => ExecResult {
+                        output: vec![format!("error: {e}")],
+                        exit_code: -1,
+                        exit_app: false,
+                    },
+                }
+            }
+            shell::CommandKind::Alias(commands) => {
+                // Nested alias — execute each sub-command
+                let mut all_output = Vec::new();
+                let mut exit_app = false;
+                for cmd in &commands {
+                    let result = self.execute_single(cmd);
+                    all_output.extend(result.output);
+                    if result.exit_app {
+                        exit_app = true;
+                        break;
                     }
+                }
+                ExecResult {
+                    output: all_output,
+                    exit_code: 0,
+                    exit_app,
                 }
             }
             shell::CommandKind::NotFound => {
-                self.history.add_entry(CommandEntry {
-                    command: command_display.clone(),
-                    output: vec![format!("command not found: {command_display}")],
-                    duration: start.elapsed(),
+                let name = input.split_whitespace().next().unwrap_or(input);
+                ExecResult {
+                    output: vec![format!("command not found: {name}")],
                     exit_code: 127,
-                });
+                    exit_app: false,
+                }
             }
         }
-
-        self.input.valid_command = true;
-        self.input.update_cwd();
     }
 
     fn on_input_changed(&mut self) {

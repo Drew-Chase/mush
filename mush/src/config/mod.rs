@@ -1,3 +1,4 @@
+pub mod alias;
 pub mod layout;
 pub mod startup;
 
@@ -16,11 +17,13 @@ pub struct Config {
     _save_path: Option<PathBuf>,
     pub layout: layout::Layout,
     pub application: startup::Application,
+    #[serde(default)]
+    pub alias: alias::Aliases,
 }
 
 impl fmt::Display for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[layout]\n{}\n[application]\n{}", self.layout, self.application)
+        write!(f, "[layout]\n{}\n[application]\n{}\n[alias]\n{}", self.layout, self.application, self.alias)
     }
 }
 
