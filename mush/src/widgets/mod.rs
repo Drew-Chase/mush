@@ -455,8 +455,7 @@ impl App {
                                             }
                                         }
                                         Err(e) => {
-                                            let _ =
-                                                tx_out.send(OutputChunk::Error(e.to_string()));
+                                            let _ = tx_out.send(OutputChunk::Error(e.to_string()));
                                             break;
                                         }
                                     }
@@ -480,8 +479,7 @@ impl App {
                                             }
                                         }
                                         Err(e) => {
-                                            let _ =
-                                                tx_err.send(OutputChunk::Error(e.to_string()));
+                                            let _ = tx_err.send(OutputChunk::Error(e.to_string()));
                                             break;
                                         }
                                     }
@@ -582,10 +580,8 @@ impl App {
     }
 
     fn run_interactive(&mut self, path: &std::path::Path, args: &[&str]) -> ExecResult {
-        use ratatui::crossterm::terminal::{
-            self, EnterAlternateScreen, LeaveAlternateScreen,
-        };
         use ratatui::crossterm::ExecutableCommand;
+        use ratatui::crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 
         let _ = terminal::disable_raw_mode();
         let _ = std::io::stdout().execute(LeaveAlternateScreen);
@@ -720,11 +716,8 @@ impl App {
                     self.spawn_help_lookup(prefix.clone());
                 }
 
-                self.autocomplete.update_with_help(
-                    partial,
-                    self.help_cache.get(&prefix),
-                    &prefix,
-                );
+                self.autocomplete
+                    .update_with_help(partial, self.help_cache.get(&prefix), &prefix);
             } else {
                 self.autocomplete.update(&input);
             }
@@ -809,10 +802,18 @@ impl App {
                     stderr
                 };
 
-                if result.len() > 20 { Some(result) } else { None }
+                if result.len() > 20 {
+                    Some(result)
+                } else {
+                    None
+                }
             };
 
-            let raw = try_help("--help").or_else(|| try_help("-h"));
+            let raw = try_help("--help")
+                .or_else(|| try_help("-h"))
+                .or_else(|| try_help("-?"))
+                .or_else(|| try_help("?"))
+                .or_else(|| try_help("/?"));
 
             if let Some(raw) = raw {
                 let _ = tx.send(HelpResult {
@@ -822,10 +823,8 @@ impl App {
             }
         });
 
-        self.pending_help_lookups.push(PendingHelpLookup {
-            command_prefix,
-            rx,
-        });
+        self.pending_help_lookups
+            .push(PendingHelpLookup { command_prefix, rx });
     }
 
     fn drain_help_lookups(&mut self) {
@@ -865,7 +864,9 @@ impl App {
             };
 
             if should_write {
-                let _ = self.db.upsert_help(&result.command_prefix, &options, &new_hash);
+                let _ = self
+                    .db
+                    .upsert_help(&result.command_prefix, &options, &new_hash);
             }
 
             self.help_cache
