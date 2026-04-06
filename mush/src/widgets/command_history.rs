@@ -16,26 +16,8 @@ pub struct CommandEntry {
 }
 
 impl CommandEntry {
-    /// Returns the rendered height for this entry's block (no gap).
-    /// 4 = 2 borders + 2 padding + content lines
     pub fn rendered_height(&self, width: u16) -> u16 {
-        let config = Config::get();
-        let inner_width = width.saturating_sub(4) as usize;
-        let content_lines: u16 = if config.layout.line_wrap && inner_width > 0 {
-            self.output
-                .iter()
-                .map(|line| {
-                    if line.is_empty() {
-                        1u16
-                    } else {
-                        ((line.len() as f64 / inner_width as f64).ceil() as u16).max(1)
-                    }
-                })
-                .sum()
-        } else {
-            self.output.len() as u16
-        };
-        4 + content_lines
+        compute_content_height(&self.output, width) + 4
     }
 
     fn render_to_buffer(&self, area: Rect, buf: &mut Buffer) {
@@ -63,48 +45,170 @@ impl CommandEntry {
             return;
         }
 
-        let truncate_width = config.layout.truncate_command_width as usize;
-        let lines: Vec<Line> = self
-            .output
+        render_output_lines(&self.output, config, inner, buf);
+    }
+}
+
+#[derive(Debug)]
+pub struct LiveRenderData {
+    pub command: String,
+    pub lines: Vec<String>,
+    pub elapsed: Duration,
+}
+
+impl LiveRenderData {
+    fn rendered_height(&self, width: u16) -> u16 {
+        compute_content_height(&self.lines, width) + 4
+    }
+
+    fn render_to_buffer(&self, area: Rect, buf: &mut Buffer) {
+        let config = Config::get();
+
+        let elapsed_str = format_duration(self.elapsed);
+        let title_bottom = Line::from(vec![
+            Span::styled(" running... ", Style::default().fg(Color::Cyan)),
+            Span::styled(elapsed_str, Style::default().fg(Color::Cyan)),
+            Span::raw(" "),
+        ]);
+
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Cyan))
+            .padding(Padding::new(1, 1, 1, 1))
+            .title(format!(" {} ", self.command))
+            .title_bottom(title_bottom);
+
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        if inner.height == 0 || inner.width == 0 {
+            return;
+        }
+
+        render_output_lines(&self.lines, config, inner, buf);
+    }
+}
+
+fn compute_content_height(output: &[String], width: u16) -> u16 {
+    let config = Config::get();
+    let inner_width = width.saturating_sub(4) as usize;
+    if config.layout.line_wrap && inner_width > 0 {
+        output
             .iter()
             .map(|line| {
-                let display = if !config.layout.line_wrap && line.len() > truncate_width {
-                    format!("{}…", &line[..truncate_width.saturating_sub(1)])
+                if line.is_empty() {
+                    1u16
                 } else {
-                    line.clone()
-                };
-                Line::raw(display)
+                    ((line.len() as f64 / inner_width as f64).ceil() as u16).max(1)
+                }
             })
-            .collect();
+            .sum()
+    } else {
+        output.len() as u16
+    }
+}
 
-        let mut paragraph = Paragraph::new(lines);
-        if config.layout.line_wrap {
-            paragraph = paragraph.wrap(Wrap { trim: false });
+fn render_output_lines(output: &[String], config: &Config, inner: Rect, buf: &mut Buffer) {
+    let truncate_width = config.layout.truncate_command_width as usize;
+    let lines: Vec<Line> = output
+        .iter()
+        .map(|line| {
+            let display = if !config.layout.line_wrap && line.len() > truncate_width {
+                format!("{}…", &line[..truncate_width.saturating_sub(1)])
+            } else {
+                line.clone()
+            };
+            Line::raw(display)
+        })
+        .collect();
+
+    let mut paragraph = Paragraph::new(lines);
+    if config.layout.line_wrap {
+        paragraph = paragraph.wrap(Wrap { trim: false });
+    }
+    paragraph.render(inner, buf);
+}
+
+pub struct LiveOutputBuffer {
+    lines: Vec<String>,
+    partial: String,
+}
+
+impl LiveOutputBuffer {
+    pub fn new() -> Self {
+        Self {
+            lines: Vec::new(),
+            partial: String::new(),
         }
-        paragraph.render(inner, buf);
+    }
+
+    pub fn push(&mut self, text: &str) {
+        let mut chars = text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\r' => {
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                        self.lines.push(std::mem::take(&mut self.partial));
+                    } else {
+                        self.partial.clear();
+                    }
+                }
+                '\n' => {
+                    self.lines.push(std::mem::take(&mut self.partial));
+                }
+                c => {
+                    self.partial.push(c);
+                }
+            }
+        }
+    }
+
+    pub fn all_lines(&self) -> Vec<&str> {
+        let mut result: Vec<&str> = self.lines.iter().map(|s| s.as_str()).collect();
+        if !self.partial.is_empty() {
+            result.push(&self.partial);
+        }
+        result
+    }
+
+    pub fn into_lines(mut self) -> Vec<String> {
+        if !self.partial.is_empty() {
+            self.lines.push(self.partial);
+        }
+        self.lines
     }
 }
 
 #[derive(Debug, Default)]
 pub struct CommandHistory {
     pub entries: Vec<CommandEntry>,
-    /// How many lines scrolled UP from the bottom. 0 = pinned to bottom.
     pub scroll_offset: u16,
+    pub live_entry: Option<LiveRenderData>,
 }
 
 impl CommandHistory {
-    /// Total content height across all entries for a given width,
-    /// including 1-line gaps between entries.
     pub fn total_content_height(&self, width: u16) -> u16 {
-        if self.entries.is_empty() {
-            return 0;
+        let mut total: u16 = 0;
+        let entry_count = self.entries.len();
+
+        if entry_count > 0 {
+            let entry_heights: u16 = self.entries.iter().map(|e| e.rendered_height(width)).sum();
+            let gaps = (entry_count - 1) as u16;
+            total = entry_heights + gaps;
         }
-        let entry_heights: u16 = self.entries.iter().map(|e| e.rendered_height(width)).sum();
-        let gaps = (self.entries.len() - 1) as u16;
-        entry_heights + gaps
+
+        if let Some(live) = &self.live_entry {
+            if total > 0 {
+                total += 1; // gap before live entry
+            }
+            total += live.rendered_height(width);
+        }
+
+        total
     }
 
-    /// Maximum scroll offset (0 when content fits in viewport).
     fn max_scroll(&self, viewport_height: u16, viewport_width: u16) -> u16 {
         self.total_content_height(viewport_width)
             .saturating_sub(viewport_height)
@@ -119,7 +223,6 @@ impl CommandHistory {
         self.scroll_offset = self.scroll_offset.saturating_sub(amount);
     }
 
-    /// Reset scroll to bottom (newest content visible).
     pub fn scroll_to_bottom(&mut self) {
         self.scroll_offset = 0;
     }
@@ -131,21 +234,18 @@ impl CommandHistory {
 
 impl Widget for &mut CommandHistory {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.height == 0 || area.width == 0 || self.entries.is_empty() {
+        let has_content = !self.entries.is_empty() || self.live_entry.is_some();
+        if area.height == 0 || area.width == 0 || !has_content {
             return;
         }
 
         let total = self.total_content_height(area.width);
 
-        // Clamp scroll offset
         let max_scroll = total.saturating_sub(area.height);
         if self.scroll_offset > max_scroll {
             self.scroll_offset = max_scroll;
         }
 
-        // Build the full virtual canvas in a temp buffer, then copy the
-        // visible viewport portion to the real buffer.
-        // The virtual canvas has height = total content height.
         if total == 0 {
             return;
         }
@@ -158,7 +258,6 @@ impl Widget for &mut CommandHistory {
         };
         let mut canvas = Buffer::empty(canvas_area);
 
-        // Render all entries into the canvas
         let mut y: u16 = 0;
         for (i, entry) in self.entries.iter().enumerate() {
             let h = entry.rendered_height(area.width);
@@ -171,14 +270,24 @@ impl Widget for &mut CommandHistory {
             entry.render_to_buffer(entry_area, &mut canvas);
             y += h;
             if i < self.entries.len() - 1 {
-                y += 1; // gap
+                y += 1;
             }
         }
 
-        // Determine which portion of the canvas is visible.
-        // scroll_offset=0 means bottom is visible.
-        // The visible window starts at (total - viewport_height - scroll_offset)
-        // from the top of the canvas.
+        if let Some(live) = &self.live_entry {
+            if !self.entries.is_empty() {
+                y += 1; // gap
+            }
+            let h = live.rendered_height(area.width);
+            let live_area = Rect {
+                x: 0,
+                y,
+                width: area.width,
+                height: h,
+            };
+            live.render_to_buffer(live_area, &mut canvas);
+        }
+
         let viewport_height = area.height.min(total);
         let canvas_start = if total <= area.height {
             0u16
@@ -186,14 +295,12 @@ impl Widget for &mut CommandHistory {
             total - area.height - self.scroll_offset
         };
 
-        // When content is shorter than viewport, pin to the bottom of the area
         let dest_y_start = if total < area.height {
             area.y + area.height - total
         } else {
             area.y
         };
 
-        // Copy visible rows from canvas to real buffer
         for row in 0..viewport_height {
             let src_row = canvas_start + row;
             if src_row >= total {

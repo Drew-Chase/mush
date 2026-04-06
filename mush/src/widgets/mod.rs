@@ -1,7 +1,10 @@
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::{DefaultTerminal, Frame};
-use std::time::Instant;
+use std::io::Read;
+use std::process::{Child, Stdio};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::{Duration, Instant};
 
 pub mod autocomplete;
 pub mod command_history;
@@ -9,7 +12,7 @@ pub mod command_input;
 pub mod history_popover;
 
 use autocomplete::Autocomplete;
-use command_history::{CommandEntry, CommandHistory};
+use command_history::{CommandEntry, CommandHistory, LiveOutputBuffer, LiveRenderData};
 use command_input::CommandInput;
 use history_popover::HistoryPopover;
 
@@ -23,6 +26,20 @@ struct ExecResult {
     exit_app: bool,
 }
 
+enum OutputChunk {
+    Data(String),
+    Error(String),
+}
+
+struct RunningCommand {
+    command: String,
+    buffer: LiveOutputBuffer,
+    rx: Receiver<OutputChunk>,
+    child: Child,
+    start: Instant,
+}
+
+
 pub struct App {
     pub history: CommandHistory,
     pub input: CommandInput,
@@ -31,6 +48,16 @@ pub struct App {
     pub db: HistoryDb,
     exit: bool,
     last_history_area: Rect,
+    running_command: Option<RunningCommand>,
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        if let Some(mut running) = self.running_command.take() {
+            let _ = running.child.kill();
+            let _ = running.child.wait();
+        }
+    }
 }
 
 impl App {
@@ -42,7 +69,6 @@ impl App {
 
         #[cfg(debug_assertions)]
         {
-            use std::time::Duration;
             history.add_entry(CommandEntry {
                 command: "cargo.exe --help".to_string(),
                 output: vec![
@@ -74,6 +100,7 @@ impl App {
             db,
             exit: false,
             last_history_area: Rect::default(),
+            running_command: None,
         })
     }
 
@@ -81,8 +108,19 @@ impl App {
         self.history.scroll_to_bottom();
 
         while !self.exit {
+            if self.running_command.is_some() {
+                self.drain_running_output();
+            }
+
             terminal.draw(|frame| self.draw(frame))?;
-            self.handle_events()?;
+
+            if self.running_command.is_some() {
+                if event::poll(Duration::from_millis(16))? {
+                    self.handle_events()?;
+                }
+            } else {
+                self.handle_events()?;
+            }
         }
 
         Ok(())
@@ -90,6 +128,12 @@ impl App {
 
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
+
+        self.history.live_entry = self.running_command.as_ref().map(|r| LiveRenderData {
+            command: r.command.clone(),
+            lines: r.buffer.all_lines().iter().map(|s| s.to_string()).collect(),
+            elapsed: r.start.elapsed(),
+        });
 
         let input_height = CommandInput::required_height();
         let popup_height = if self.history_popover.visible {
@@ -127,6 +171,22 @@ impl App {
     fn handle_events(&mut self) -> color_eyre::Result<()> {
         if let Event::Key(key) = event::read()? {
             if key.kind != KeyEventKind::Press {
+                return Ok(());
+            }
+
+            if self.running_command.is_some() {
+                match (key.modifiers, key.code) {
+                    (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+                        self.kill_running_command();
+                    }
+                    (_, KeyCode::PageUp) | (KeyModifiers::SHIFT, KeyCode::Up) => {
+                        self.history_scroll_up();
+                    }
+                    (_, KeyCode::PageDown) | (KeyModifiers::SHIFT, KeyCode::Down) => {
+                        self.history_scroll_down();
+                    }
+                    _ => {}
+                }
                 return Ok(());
             }
 
@@ -277,23 +337,25 @@ impl App {
                 }
             }
             other => {
-                let result = self.dispatch_resolved(other, trimmed);
-                let duration = start.elapsed();
-                let _ = self.db.insert(
-                    &command_display,
-                    result.exit_code,
-                    duration.as_millis() as i64,
-                    Some(&cwd),
-                );
-                self.history.add_entry(CommandEntry {
-                    command: command_display,
-                    output: result.output,
-                    duration,
-                    exit_code: result.exit_code,
-                });
-                if result.exit_app {
-                    self.exit = true;
+                if let Some(result) = self.dispatch_resolved(other, &command_display, trimmed) {
+                    let duration = start.elapsed();
+                    let _ = self.db.insert(
+                        &command_display,
+                        result.exit_code,
+                        duration.as_millis() as i64,
+                        Some(&cwd),
+                    );
+                    self.history.add_entry(CommandEntry {
+                        command: command_display,
+                        output: result.output,
+                        duration,
+                        exit_code: result.exit_code,
+                    });
+                    if result.exit_app {
+                        self.exit = true;
+                    }
                 }
+                // None means running_command was set — event loop takes over
             }
         }
 
@@ -304,10 +366,110 @@ impl App {
 
     fn execute_single(&mut self, input: &str) -> ExecResult {
         let resolved = shell::resolve_command(input);
-        self.dispatch_resolved(resolved, input)
+        // Aliases use synchronous execution
+        self.dispatch_resolved_sync(resolved, input)
     }
 
-    fn dispatch_resolved(&mut self, kind: shell::CommandKind, input: &str) -> ExecResult {
+    fn dispatch_resolved(
+        &mut self,
+        kind: shell::CommandKind,
+        command_display: &str,
+        input: &str,
+    ) -> Option<ExecResult> {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+        let args = if parts.len() > 1 { &parts[1..] } else { &[] };
+
+        match kind {
+            shell::CommandKind::External(path) => {
+                match std::process::Command::new(&path)
+                    .args(args)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                {
+                    Ok(mut child) => {
+                        let (tx, rx) = mpsc::channel::<OutputChunk>();
+
+                        if let Some(stdout) = child.stdout.take() {
+                            let tx_out = tx.clone();
+                            std::thread::spawn(move || {
+                                let mut reader = std::io::BufReader::new(stdout);
+                                let mut buf = [0u8; 4096];
+                                loop {
+                                    match reader.read(&mut buf) {
+                                        Ok(0) => break,
+                                        Ok(n) => {
+                                            let text =
+                                                String::from_utf8_lossy(&buf[..n]).to_string();
+                                            if tx_out.send(OutputChunk::Data(text)).is_err() {
+                                                break;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let _ =
+                                                tx_out.send(OutputChunk::Error(e.to_string()));
+                                            break;
+                                        }
+                                    }
+                                }
+                            });
+                        }
+
+                        if let Some(stderr) = child.stderr.take() {
+                            let tx_err = tx.clone();
+                            std::thread::spawn(move || {
+                                let mut reader = std::io::BufReader::new(stderr);
+                                let mut buf = [0u8; 4096];
+                                loop {
+                                    match reader.read(&mut buf) {
+                                        Ok(0) => break,
+                                        Ok(n) => {
+                                            let text =
+                                                String::from_utf8_lossy(&buf[..n]).to_string();
+                                            if tx_err.send(OutputChunk::Data(text)).is_err() {
+                                                break;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let _ =
+                                                tx_err.send(OutputChunk::Error(e.to_string()));
+                                            break;
+                                        }
+                                    }
+                                }
+                            });
+                        }
+
+                        // Drop the original sender so Disconnected fires
+                        // when both reader threads finish
+                        drop(tx);
+
+                        self.running_command = Some(RunningCommand {
+                            command: command_display.to_string(),
+                            buffer: LiveOutputBuffer::new(),
+                            rx,
+                            child,
+                            start: Instant::now(),
+                        });
+
+                        None
+                    }
+                    Err(e) => Some(ExecResult {
+                        output: vec![format!("error: {e}")],
+                        exit_code: -1,
+                        exit_app: false,
+                    }),
+                }
+            }
+            other => Some(self.dispatch_resolved_sync(other, input)),
+        }
+    }
+
+    fn dispatch_resolved_sync(
+        &mut self,
+        kind: shell::CommandKind,
+        input: &str,
+    ) -> ExecResult {
         let parts: Vec<&str> = input.split_whitespace().collect();
         let args = if parts.len() > 1 { &parts[1..] } else { &[] };
 
@@ -373,6 +535,84 @@ impl App {
                     exit_app: false,
                 }
             }
+        }
+    }
+
+    fn drain_running_output(&mut self) {
+        let running = match &mut self.running_command {
+            Some(r) => r,
+            None => return,
+        };
+
+        loop {
+            match running.rx.try_recv() {
+                Ok(OutputChunk::Data(text)) => {
+                    running.buffer.push(&text);
+                }
+                Ok(OutputChunk::Error(msg)) => {
+                    running.buffer.push(&format!("[error: {msg}]"));
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.finalize_running_command();
+                    return;
+                }
+            }
+        }
+    }
+
+    fn finalize_running_command(&mut self) {
+        if let Some(mut running) = self.running_command.take() {
+            let exit_code = match running.child.wait() {
+                Ok(status) => status.code().unwrap_or(-1),
+                Err(_) => -1,
+            };
+            let duration = running.start.elapsed();
+            let output = running.buffer.into_lines();
+
+            let _ = self.db.insert(
+                &running.command,
+                exit_code,
+                duration.as_millis() as i64,
+                Some(&self.input.cwd),
+            );
+
+            self.history.add_entry(CommandEntry {
+                command: running.command,
+                output,
+                duration,
+                exit_code,
+            });
+
+            self.input.update_cwd();
+            self.history.scroll_to_bottom();
+        }
+    }
+
+    fn kill_running_command(&mut self) {
+        if let Some(mut running) = self.running_command.take() {
+            let _ = running.child.kill();
+            let _ = running.child.wait();
+            let duration = running.start.elapsed();
+            let mut output = running.buffer.into_lines();
+            output.push("^C".to_string());
+
+            let _ = self.db.insert(
+                &running.command,
+                130,
+                duration.as_millis() as i64,
+                Some(&self.input.cwd),
+            );
+
+            self.history.add_entry(CommandEntry {
+                command: running.command,
+                output,
+                duration,
+                exit_code: 130,
+            });
+
+            self.input.update_cwd();
+            self.history.scroll_to_bottom();
         }
     }
 

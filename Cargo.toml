@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/echo", "crates/ls", "mush"]
+members = ["crates/echo", "crates/ls", "examples/progress", "mush"]
 
 [profile.release]
 codegen-units = 1
