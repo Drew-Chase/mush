@@ -6,11 +6,15 @@ use std::time::Instant;
 pub mod autocomplete;
 pub mod command_history;
 pub mod command_input;
+pub mod history_popover;
 
 use autocomplete::Autocomplete;
 use command_history::{CommandEntry, CommandHistory};
 use command_input::CommandInput;
+use history_popover::HistoryPopover;
 
+use crate::config::Config;
+use crate::db::HistoryDb;
 use crate::shell;
 
 struct ExecResult {
@@ -19,20 +23,23 @@ struct ExecResult {
     exit_app: bool,
 }
 
-#[derive(Debug)]
 pub struct App {
     pub history: CommandHistory,
     pub input: CommandInput,
     pub autocomplete: Autocomplete,
+    pub history_popover: HistoryPopover,
+    pub db: HistoryDb,
     exit: bool,
     last_history_area: Rect,
 }
 
-impl Default for App {
-    fn default() -> Self {
+impl App {
+    pub fn new() -> color_eyre::Result<Self> {
+        let db_path = Config::get().db_path();
+        let db = HistoryDb::open(&db_path)?;
+
         let mut history = CommandHistory::default();
 
-        // Add some demo entries so the UI isn't empty on first launch
         #[cfg(debug_assertions)]
         {
             use std::time::Duration;
@@ -59,17 +66,17 @@ impl Default for App {
             });
         }
 
-        Self {
+        Ok(Self {
             history,
             input: CommandInput::default(),
             autocomplete: Autocomplete::default(),
+            history_popover: HistoryPopover::default(),
+            db,
             exit: false,
             last_history_area: Rect::default(),
-        }
+        })
     }
-}
 
-impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
         self.history.scroll_to_bottom();
 
@@ -85,7 +92,11 @@ impl App {
         let area = frame.area();
 
         let input_height = CommandInput::required_height();
-        let popup_height = self.autocomplete.popup_height();
+        let popup_height = if self.history_popover.visible {
+            self.history_popover.popup_height()
+        } else {
+            self.autocomplete.popup_height()
+        };
         let gap = if popup_height > 0 { 1 } else { 2 };
 
         let chunks = Layout::vertical([
@@ -98,20 +109,18 @@ impl App {
 
         let history_area = chunks[0];
         let popup_area = chunks[1];
-        // chunks[2] is the gap
         let input_area = chunks[3];
 
         self.last_history_area = history_area;
 
-        // Render command history (scrollable, fills top)
         frame.render_widget(&mut self.history, history_area);
 
-        // Render autocomplete popup (if visible)
-        if self.autocomplete.visible {
+        if self.history_popover.visible {
+            frame.render_widget(&self.history_popover, popup_area);
+        } else if self.autocomplete.visible {
             frame.render_widget(&self.autocomplete, popup_area);
         }
 
-        // Render command input (pinned to bottom)
         frame.render_widget(&self.input, input_area);
     }
 
@@ -127,12 +136,53 @@ impl App {
                     self.exit = true;
                 }
 
-                // Escape closes autocomplete
+                // Ctrl+R toggles history popover
+                (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
+                    if self.history_popover.visible {
+                        self.history_popover.close();
+                    } else {
+                        self.autocomplete.close();
+                        self.history_popover.open(&self.db);
+                    }
+                }
+
+                // --- History popover active ---
+                (_, KeyCode::Esc) if self.history_popover.visible => {
+                    self.history_popover.close();
+                }
+                (KeyModifiers::NONE, KeyCode::Up) if self.history_popover.visible => {
+                    self.history_popover.select_up();
+                }
+                (KeyModifiers::NONE, KeyCode::Down) if self.history_popover.visible => {
+                    self.history_popover.select_down();
+                }
+                (_, KeyCode::Enter) if self.history_popover.visible => {
+                    if let Some(cmd) = self.history_popover.accept() {
+                        self.input.buffer = cmd;
+                        self.input.cursor = self.input.buffer.len();
+                        self.validate_input();
+                    }
+                }
+                (_, KeyCode::Tab) if self.history_popover.visible => {
+                    if let Some(cmd) = self.history_popover.accept() {
+                        self.input.buffer = cmd;
+                        self.input.cursor = self.input.buffer.len();
+                        self.validate_input();
+                    }
+                }
+                (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c))
+                    if self.history_popover.visible && c >= ' ' =>
+                {
+                    self.history_popover.insert_char(c);
+                }
+                (_, KeyCode::Backspace) if self.history_popover.visible => {
+                    self.history_popover.backspace();
+                }
+
+                // --- Autocomplete active ---
                 (_, KeyCode::Esc) => {
                     self.autocomplete.close();
                 }
-
-                // Tab accepts autocomplete suggestion
                 (_, KeyCode::Tab) => {
                     if let Some(accepted) = self.autocomplete.accept() {
                         self.input.buffer = accepted;
@@ -140,16 +190,12 @@ impl App {
                         self.validate_input();
                     }
                 }
-
-                // Up/Down navigate autocomplete when visible, scroll history otherwise
                 (KeyModifiers::NONE, KeyCode::Up) if self.autocomplete.visible => {
                     self.autocomplete.select_up();
                 }
                 (KeyModifiers::NONE, KeyCode::Down) if self.autocomplete.visible => {
                     self.autocomplete.select_down();
                 }
-                (KeyModifiers::NONE, KeyCode::Up) => self.history_scroll_up(),
-                (KeyModifiers::NONE, KeyCode::Down) => self.history_scroll_down(),
 
                 // Submit command
                 (_, KeyCode::Enter) => {
@@ -171,13 +217,15 @@ impl App {
                 (_, KeyCode::Home) => self.input.home(),
                 (_, KeyCode::End) => self.input.end(),
 
-                // Character input — only printable characters (filter control/escape fragments)
+                // Character input
                 (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) if c >= ' ' => {
                     self.input.insert_char(c);
                     self.on_input_changed();
                 }
 
                 // Scroll history
+                (KeyModifiers::NONE, KeyCode::Up) => self.history_scroll_up(),
+                (KeyModifiers::NONE, KeyCode::Down) => self.history_scroll_down(),
                 (_, KeyCode::PageUp) => self.history_scroll_up(),
                 (_, KeyCode::PageDown) => self.history_scroll_down(),
                 (KeyModifiers::SHIFT, KeyCode::Up) => self.history_scroll_up(),
@@ -198,6 +246,7 @@ impl App {
         }
 
         let command_display = trimmed.to_string();
+        let cwd = self.input.cwd.clone();
         let start = Instant::now();
 
         match shell::resolve_command(trimmed) {
@@ -213,6 +262,12 @@ impl App {
                 }
                 let duration = start.elapsed();
                 if !all_output.is_empty() || !commands.is_empty() {
+                    let _ = self.db.insert(
+                        &command_display,
+                        0,
+                        duration.as_millis() as i64,
+                        Some(&cwd),
+                    );
                     self.history.add_entry(CommandEntry {
                         command: command_display,
                         output: all_output,
@@ -224,6 +279,12 @@ impl App {
             other => {
                 let result = self.dispatch_resolved(other, trimmed);
                 let duration = start.elapsed();
+                let _ = self.db.insert(
+                    &command_display,
+                    result.exit_code,
+                    duration.as_millis() as i64,
+                    Some(&cwd),
+                );
                 self.history.add_entry(CommandEntry {
                     command: command_display,
                     output: result.output,
@@ -241,13 +302,11 @@ impl App {
         self.history.scroll_to_bottom();
     }
 
-    /// Execute a single command string (used by alias expansion).
     fn execute_single(&mut self, input: &str) -> ExecResult {
         let resolved = shell::resolve_command(input);
         self.dispatch_resolved(resolved, input)
     }
 
-    /// Dispatch an already-resolved command kind.
     fn dispatch_resolved(&mut self, kind: shell::CommandKind, input: &str) -> ExecResult {
         let parts: Vec<&str> = input.split_whitespace().collect();
         let args = if parts.len() > 1 { &parts[1..] } else { &[] };
@@ -290,7 +349,6 @@ impl App {
                 }
             }
             shell::CommandKind::Alias(commands) => {
-                // Nested alias — execute each sub-command
                 let mut all_output = Vec::new();
                 let mut exit_app = false;
                 for cmd in &commands {

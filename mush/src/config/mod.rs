@@ -53,6 +53,14 @@ impl Config {
         Ok(())
     }
 
+    pub fn db_path(&self) -> PathBuf {
+        self._save_path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(|dir| dir.join(".db"))
+            .unwrap_or_else(|| PathBuf::from(".db"))
+    }
+
     /// Saves the current config to the path it was loaded from.
     pub fn save(&self) -> Result<()> {
         let path = self

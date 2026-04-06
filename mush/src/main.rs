@@ -1,4 +1,5 @@
 mod config;
+mod db;
 mod shell;
 mod widgets;
 
@@ -13,7 +14,7 @@ fn main() -> color_eyre::Result<()> {
     Config::load_or_default("./config.toml")?;
     Config::get().save()?;
     ratatui::run(|terminal| -> color_eyre::Result<()> {
-        let mut instance = App::default();
+        let mut instance = App::new()?;
         instance.run(terminal)?;
         Ok(())
     })?;

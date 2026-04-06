@@ -14,3 +14,5 @@ ratatui = { version = "0.30.0" }
 color-eyre = { version = "0.6.5" }
 serde = { version = "1.0.228", features = ["derive"] }
 toml = { version = "1.1.2", features = ["serde"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1", features = ["rt"] }
