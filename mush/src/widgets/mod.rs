@@ -199,8 +199,16 @@ impl App {
 
             match (key.modifiers, key.code) {
                 // Quit
-                (KeyModifiers::CONTROL, KeyCode::Char('c' | 'q')) => {
+                (KeyModifiers::CONTROL, KeyCode::Char('q')) => {
                     self.exit = true;
+                }
+
+                // Ctrl+C clears input
+                (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+                    self.input.clear();
+                    self.autocomplete.close();
+                    self.history_popover.close();
+                    self.validate_input();
                 }
 
                 // Ctrl+R toggles history popover
@@ -317,6 +325,10 @@ impl App {
         let start = Instant::now();
 
         match shell::resolve_command(trimmed) {
+            shell::CommandKind::Builtin(shell::builtins::BuiltinCommand::Clear) => {
+                self.history.entries.clear();
+                self.history.scroll_to_bottom();
+            }
             shell::CommandKind::Alias(commands) => {
                 let mut all_output: Vec<String> = Vec::new();
                 for cmd in &commands {

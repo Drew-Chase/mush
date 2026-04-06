@@ -63,6 +63,8 @@ pub fn all_commands() -> Vec<CommandInfo> {
 
     // Builtins
     commands.push(CommandInfo { name: "cd".to_string(), description: Some("(builtin)".to_string()) });
+    commands.push(CommandInfo { name: "clear".to_string(), description: Some("(builtin)".to_string()) });
+    commands.push(CommandInfo { name: "cls".to_string(), description: Some("(builtin)".to_string()) });
     commands.push(CommandInfo { name: "exit".to_string(), description: Some("(builtin)".to_string()) });
 
     // PATH executables

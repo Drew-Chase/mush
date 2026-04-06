@@ -3,6 +3,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy)]
 pub enum BuiltinCommand {
     Cd,
+    Clear,
     Exit,
 }
 
@@ -15,6 +16,7 @@ pub struct BuiltinResult {
 pub fn lookup(name: &str) -> Option<BuiltinCommand> {
     match name.to_lowercase().as_str() {
         "cd" => Some(BuiltinCommand::Cd),
+        "clear" | "cls" => Some(BuiltinCommand::Clear),
         "exit" => Some(BuiltinCommand::Exit),
         _ => None,
     }
@@ -23,6 +25,11 @@ pub fn lookup(name: &str) -> Option<BuiltinCommand> {
 pub fn execute(cmd: BuiltinCommand, args: &[&str]) -> BuiltinResult {
     match cmd {
         BuiltinCommand::Cd => execute_cd(args),
+        BuiltinCommand::Clear => BuiltinResult {
+            output: Vec::new(),
+            exit_app: false,
+            change_dir: None,
+        },
         BuiltinCommand::Exit => BuiltinResult {
             output: Vec::new(),
             exit_app: true,
@@ -33,7 +40,6 @@ pub fn execute(cmd: BuiltinCommand, args: &[&str]) -> BuiltinResult {
 
 fn execute_cd(args: &[&str]) -> BuiltinResult {
     let target = if args.is_empty() {
-        // No args: go to home directory
         match home_dir() {
             Some(home) => home,
             None => {
@@ -41,12 +47,11 @@ fn execute_cd(args: &[&str]) -> BuiltinResult {
                     output: vec!["cd: could not determine home directory".to_string()],
                     exit_app: false,
                     change_dir: None,
-                };
+                        };
             }
         }
     } else {
         let path_str = args[0];
-        // Handle ~ expansion
         if path_str == "~" {
             match home_dir() {
                 Some(home) => home,
@@ -55,7 +60,7 @@ fn execute_cd(args: &[&str]) -> BuiltinResult {
                         output: vec!["cd: could not determine home directory".to_string()],
                         exit_app: false,
                         change_dir: None,
-                    };
+                                };
                 }
             }
         } else if let Some(rest) = path_str.strip_prefix("~/").or_else(|| path_str.strip_prefix("~\\")) {
@@ -66,7 +71,7 @@ fn execute_cd(args: &[&str]) -> BuiltinResult {
                         output: vec!["cd: could not determine home directory".to_string()],
                         exit_app: false,
                         change_dir: None,
-                    };
+                                };
                 }
             }
         } else {
