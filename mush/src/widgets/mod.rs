@@ -3,9 +3,11 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::{DefaultTerminal, Frame};
 use std::time::Instant;
 
+pub mod autocomplete;
 pub mod command_history;
 pub mod command_input;
 
+use autocomplete::Autocomplete;
 use command_history::{CommandEntry, CommandHistory};
 use command_input::CommandInput;
 
@@ -15,6 +17,7 @@ use crate::shell;
 pub struct App {
     pub history: CommandHistory,
     pub input: CommandInput,
+    pub autocomplete: Autocomplete,
     exit: bool,
 }
 
@@ -52,6 +55,7 @@ impl Default for App {
         Self {
             history,
             input: CommandInput::default(),
+            autocomplete: Autocomplete::default(),
             exit: false,
         }
     }
@@ -78,19 +82,29 @@ impl App {
         let area = frame.area();
 
         let input_height = CommandInput::required_height();
+        let popup_height = self.autocomplete.popup_height();
+        let gap = if popup_height > 0 { 1 } else { 2 };
+
         let chunks = Layout::vertical([
             Constraint::Min(0),
-            Constraint::Length(2),
+            Constraint::Length(popup_height),
+            Constraint::Length(gap),
             Constraint::Length(input_height),
         ])
         .split(area);
 
         let history_area = chunks[0];
-        // chunks[1] is the 2-line gap
-        let input_area = chunks[2];
+        let popup_area = chunks[1];
+        // chunks[2] is the gap
+        let input_area = chunks[3];
 
         // Render command history (scrollable, fills top)
         frame.render_widget(&mut self.history, history_area);
+
+        // Render autocomplete popup (if visible)
+        if self.autocomplete.visible {
+            frame.render_widget(&self.autocomplete, popup_area);
+        }
 
         // Render command input (pinned to bottom)
         frame.render_widget(&self.input, input_area);
@@ -109,19 +123,42 @@ impl App {
                     self.exit = true;
                 }
 
+                // Escape closes autocomplete
+                (_, KeyCode::Esc) => {
+                    self.autocomplete.close();
+                }
+
+                // Tab accepts autocomplete suggestion
+                (_, KeyCode::Tab) => {
+                    if let Some(accepted) = self.autocomplete.accept() {
+                        self.input.buffer = accepted;
+                        self.input.cursor = self.input.buffer.len();
+                        self.validate_input();
+                    }
+                }
+
+                // Up/Down navigate autocomplete when visible
+                (KeyModifiers::NONE, KeyCode::Up) if self.autocomplete.visible => {
+                    self.autocomplete.select_up();
+                }
+                (KeyModifiers::NONE, KeyCode::Down) if self.autocomplete.visible => {
+                    self.autocomplete.select_down();
+                }
+
                 // Submit command
                 (_, KeyCode::Enter) => {
+                    self.autocomplete.close();
                     self.execute_command();
                 }
 
                 // Text editing
                 (_, KeyCode::Backspace) => {
                     self.input.backspace();
-                    self.validate_input();
+                    self.on_input_changed();
                 }
                 (_, KeyCode::Delete) => {
                     self.input.delete();
-                    self.validate_input();
+                    self.on_input_changed();
                 }
                 (_, KeyCode::Left) => self.input.move_left(),
                 (_, KeyCode::Right) => self.input.move_right(),
@@ -131,7 +168,7 @@ impl App {
                 // Character input
                 (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                     self.input.insert_char(c);
-                    self.validate_input();
+                    self.on_input_changed();
                 }
 
                 // Scroll history
@@ -229,6 +266,11 @@ impl App {
 
         self.input.valid_command = true;
         self.input.update_cwd();
+    }
+
+    fn on_input_changed(&mut self) {
+        self.validate_input();
+        self.autocomplete.update(&self.input.buffer);
     }
 
     fn validate_input(&mut self) {

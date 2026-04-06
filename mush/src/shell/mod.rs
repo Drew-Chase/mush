@@ -28,6 +28,15 @@ pub fn resolve_command(input: &str) -> CommandKind {
     CommandKind::NotFound
 }
 
+/// Returns all available command names (builtins + PATH executables).
+pub fn all_command_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = vec!["cd", "exit"];
+    for name in path_resolver::list_executables() {
+        names.push(name.as_str());
+    }
+    names
+}
+
 /// Quick check for syntax highlighting: is the first token a valid command?
 /// Returns `true` for empty input (no red on empty buffer).
 pub fn is_valid_command(input: &str) -> bool {

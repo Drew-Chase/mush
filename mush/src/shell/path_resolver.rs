@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 static PATH_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> = OnceLock::new();
+static EXECUTABLE_NAMES: OnceLock<Vec<String>> = OnceLock::new();
 
 fn cache() -> &'static Mutex<HashMap<String, Option<PathBuf>>> {
     PATH_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -103,4 +104,54 @@ fn get_extensions(name: &str) -> Vec<String> {
     {
         Vec::new()
     }
+}
+
+/// Returns a cached list of all executable names found on PATH.
+/// Scanned once on first call.
+pub fn list_executables() -> &'static [String] {
+    EXECUTABLE_NAMES.get_or_init(|| {
+        let mut names = HashSet::new();
+        let path_var = match std::env::var("PATH") {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+
+        let extensions = {
+            #[cfg(windows)]
+            {
+                if let Ok(pathext) = std::env::var("PATHEXT") {
+                    pathext.split(';').map(|s| s.to_lowercase()).collect::<Vec<_>>()
+                } else {
+                    vec![".exe".to_string(), ".cmd".to_string(), ".bat".to_string(), ".com".to_string(), ".ps1".to_string()]
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                Vec::<String>::new()
+            }
+        };
+
+        for dir in std::env::split_paths(&path_var) {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            for entry in entries.flatten() {
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                if extensions.is_empty() {
+                    // Unix: check if file is executable (just list all files)
+                    names.insert(file_name);
+                } else {
+                    let lower = file_name.to_lowercase();
+                    if extensions.iter().any(|ext| lower.ends_with(ext.as_str())) {
+                        names.insert(file_name);
+                    }
+                }
+            }
+        }
+
+        let mut sorted: Vec<String> = names.into_iter().collect();
+        sorted.sort();
+        sorted
+    })
 }
