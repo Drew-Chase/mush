@@ -49,6 +49,7 @@ pub struct App {
     exit: bool,
     last_history_area: Rect,
     running_command: Option<RunningCommand>,
+    needs_clear: bool,
 }
 
 impl Drop for App {
@@ -101,6 +102,7 @@ impl App {
             exit: false,
             last_history_area: Rect::default(),
             running_command: None,
+            needs_clear: false,
         })
     }
 
@@ -108,6 +110,11 @@ impl App {
         self.history.scroll_to_bottom();
 
         while !self.exit {
+            if self.needs_clear {
+                terminal.clear()?;
+                self.needs_clear = false;
+            }
+
             if self.running_command.is_some() {
                 self.drain_running_output();
             }
@@ -380,6 +387,11 @@ impl App {
         let args = if parts.len() > 1 { &parts[1..] } else { &[] };
 
         match kind {
+            shell::CommandKind::External(ref path)
+                if !parts.is_empty() && shell::is_interactive(parts[0]) =>
+            {
+                Some(self.run_interactive(path, args))
+            }
             shell::CommandKind::External(path) => {
                 match std::process::Command::new(&path)
                     .args(args)
@@ -535,6 +547,35 @@ impl App {
                     exit_app: false,
                 }
             }
+        }
+    }
+
+    fn run_interactive(&mut self, path: &std::path::Path, args: &[&str]) -> ExecResult {
+        use ratatui::crossterm::terminal::{
+            self, EnterAlternateScreen, LeaveAlternateScreen,
+        };
+        use ratatui::crossterm::ExecutableCommand;
+
+        let _ = terminal::disable_raw_mode();
+        let _ = std::io::stdout().execute(LeaveAlternateScreen);
+
+        let status = std::process::Command::new(path).args(args).status();
+
+        let _ = std::io::stdout().execute(EnterAlternateScreen);
+        let _ = terminal::enable_raw_mode();
+        self.needs_clear = true;
+
+        match status {
+            Ok(s) => ExecResult {
+                output: Vec::new(),
+                exit_code: s.code().unwrap_or(-1),
+                exit_app: false,
+            },
+            Err(e) => ExecResult {
+                output: vec![format!("error: {e}")],
+                exit_code: -1,
+                exit_app: false,
+            },
         }
     }
 

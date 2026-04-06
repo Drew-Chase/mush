@@ -1,7 +1,7 @@
 pub mod builtins;
 pub mod path_resolver;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 
@@ -94,4 +94,31 @@ pub fn is_valid_command(input: &str) -> bool {
     }
 
     path_resolver::is_executable(name)
+}
+
+pub fn is_interactive(cmd_name: &str) -> bool {
+    let stem = Path::new(cmd_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(cmd_name)
+        .to_lowercase();
+
+    const INTERACTIVE: &[&str] = &[
+        "powershell", "pwsh", "cmd", "bash", "zsh", "fish", "sh", "nu", "mush",
+        "vim", "nvim", "vi", "nano", "helix", "emacs",
+        "python", "python3", "node", "irb", "lua",
+        "top", "htop", "btop", "less", "more", "man",
+        "ssh", "ftp", "claude",
+    ];
+
+    if INTERACTIVE.contains(&stem.as_str()) {
+        return true;
+    }
+
+    let config = Config::get();
+    config
+        .application
+        .interactive_commands
+        .iter()
+        .any(|c| c.to_lowercase() == stem)
 }

@@ -5,6 +5,8 @@ use std::fmt;
 pub struct Application {
     pub default_cwd: Option<String>,
     pub theme: String,
+    #[serde(default)]
+    pub interactive_commands: Vec<String>,
 }
 
 impl Default for Application {
@@ -12,6 +14,7 @@ impl Default for Application {
         Self {
             default_cwd: None,
             theme: String::from("dark.joker"),
+            interactive_commands: Vec::new(),
         }
     }
 }
@@ -24,6 +27,13 @@ impl fmt::Display for Application {
             None => writeln!(f, "# default_cwd = \"~/\"")?,
         }
         writeln!(f, "# Color theme name")?;
-        writeln!(f, "theme = \"{}\"", self.theme)
+        writeln!(f, "theme = \"{}\"", self.theme)?;
+        writeln!(f, "# Additional commands that should get full terminal control")?;
+        if self.interactive_commands.is_empty() {
+            writeln!(f, "# interactive_commands = [\"my-tui-app\"]")
+        } else {
+            let quoted: Vec<String> = self.interactive_commands.iter().map(|c| format!("\"{}\"", c)).collect();
+            writeln!(f, "interactive_commands = [{}]", quoted.join(", "))
+        }
     }
 }
