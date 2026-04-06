@@ -1,4 +1,4 @@
-set windows-shell := ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command"]
+set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 set shell := ["bash", "-c"]
 
 dist_dir := "./target/dist"
@@ -26,3 +26,7 @@ package: clean
 package: clean
     mkdir -p "{{dist_dir}}"
     cargo build --workspace --release --message-format=json | jq -r 'select(.reason == "compiler-artifact" and .executable != null) | .executable' | xargs -I {} cp {} "{{dist_dir}}/"
+
+[windows]
+installer: package
+    makensis nsis\installer.nsis

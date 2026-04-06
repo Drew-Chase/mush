@@ -1,0 +1,143 @@
+; ============================================================================
+; Mush Shell — NSIS Installer (ModernUI)
+;
+; A fully cross-platform shell interpreter and drop-in replacement
+; for PowerShell, BASH, and ZSH.
+;
+; Structure:
+;   installer.nsis          — This file (defines, includes, page order)
+;   ui/license.nsh          — License agreement page
+;   ui/install_mode.nsh     — User vs System install selection
+;   ui/directory.nsh        — Directory picker
+;   ui/options.nsh          — PATH, Windows Terminal, Start Menu, etc.
+;   ui/instfiles.nsh        — File copying, registry, uninstaller
+;   ui/finish.nsh           — Completion page with launch option
+;   utils/path_utils.nsh    — Shared PATH manipulation macros
+; ============================================================================
+
+; --- Compiler flags ---
+Unicode true
+SetCompressor /SOLID lzma
+
+; ============================================================================
+; Application metadata
+; ============================================================================
+!define APP_NAME        "Mush"
+!define APP_VERSION     "0.1.0"
+!define APP_PUBLISHER   "Drew Chase"
+!define APP_URL         "https://github.com/drew-chase/mush"
+!define UNINSTALL_KEY   "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
+
+; Path to the built binaries (relative to this .nsi file)
+!define DIST_DIR        "..\target\dist"
+
+; Path to the license file
+!define MUSH_LICENSE_FILE "..\LICENSE"
+
+; ============================================================================
+; ModernUI includes
+; ============================================================================
+!include "MUI2.nsh"
+!include "nsDialogs.nsh"
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
+!include "WinMessages.nsh"
+
+; ============================================================================
+; Utility includes
+; ============================================================================
+!include "utils\path_utils.nsh"
+
+; ============================================================================
+; Installer attributes
+; ============================================================================
+Name "${APP_NAME} ${APP_VERSION}"
+OutFile "..\target\mush-${APP_VERSION}-setup.exe"
+InstallDir "$LOCALAPPDATA\${APP_NAME}"
+InstallDirRegKey HKCU "${UNINSTALL_KEY}" "InstallLocation"
+
+; Request highest available privileges — if user selects system install
+; they already need to be running as admin (enforced by the install_mode page)
+RequestExecutionLevel highest
+
+; ============================================================================
+; ModernUI settings
+; ============================================================================
+
+; --- Branding ---
+!define MUI_ABORTWARNING
+!define MUI_ABORTWARNING_TEXT "Are you sure you want to cancel Mush installation?"
+
+; Uncomment these when icon files are available:
+; !define MUI_ICON "..\assets\mush.ico"
+; !define MUI_UNICON "..\assets\mush.ico"
+
+; Welcome page text
+!define MUI_WELCOMEPAGE_TITLE "Welcome to Mush Setup"
+!define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of Mush ${APP_VERSION}.$\r$\n$\r$\nMush is a fully cross-platform shell interpreter and drop-in replacement for PowerShell, BASH, and ZSH.$\r$\n$\r$\nClick Next to continue."
+
+; ============================================================================
+; Page order — each page is defined in its own .nsh file
+; ============================================================================
+
+; 1. Welcome
+!insertmacro MUI_PAGE_WELCOME
+
+; 2. License agreement
+!include "ui\license.nsh"
+
+; 3. Install scope (user vs system) — custom page
+!include "ui\install_mode.nsh"
+
+; 4. Directory selection
+!include "ui\directory.nsh"
+
+; 5. Options (PATH, Windows Terminal, Start Menu, default shell)
+!include "ui\options.nsh"
+
+; 6. Install files + progress bar (also contains Section definitions)
+!include "ui\instfiles.nsh"
+
+; 7. Finish
+!include "ui\finish.nsh"
+
+; ============================================================================
+; Uninstaller pages
+; ============================================================================
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+; ============================================================================
+; Language (must come after all MUI page macros)
+; ============================================================================
+!insertmacro MUI_LANGUAGE "English"
+
+; ============================================================================
+; Installer initialization
+; ============================================================================
+Function .onInit
+    ; Default to user install
+    StrCpy $InstallMode "user"
+    StrCpy $OptAddToPath ${BST_CHECKED}
+    StrCpy $OptWindowsTerminal ${BST_CHECKED}
+    StrCpy $OptStartMenu ${BST_CHECKED}
+    StrCpy $OptSetDefaultShell ${BST_UNCHECKED}
+FunctionEnd
+
+; ============================================================================
+; Uninstaller initialization
+; ============================================================================
+Function un.onInit
+    ; Read install mode to set proper context
+    ReadRegStr $InstallMode HKCU "${UNINSTALL_KEY}" "InstallMode"
+    ${If} $InstallMode == ""
+        ReadRegStr $InstallMode HKLM "${UNINSTALL_KEY}" "InstallMode"
+    ${EndIf}
+
+    ${If} $InstallMode == "system"
+        SetShellVarContext all
+    ${Else}
+        StrCpy $InstallMode "user"
+        SetShellVarContext current
+    ${EndIf}
+FunctionEnd
