@@ -16,11 +16,10 @@ pub struct CommandEntry {
 }
 
 impl CommandEntry {
-    /// Returns the number of rendered lines for just this entry's block (no gap).
-    /// Includes: 2 for top/bottom border + 2 for top/bottom padding + output lines
-    fn rendered_height(&self, width: u16) -> u16 {
+    /// Returns the rendered height for this entry's block (no gap).
+    /// 4 = 2 borders + 2 padding + content lines
+    pub fn rendered_height(&self, width: u16) -> u16 {
         let config = Config::get();
-        // 2 for left/right border + 2 for left/right padding
         let inner_width = width.saturating_sub(4) as usize;
         let content_lines: u16 = if config.layout.line_wrap && inner_width > 0 {
             self.output
@@ -36,11 +35,10 @@ impl CommandEntry {
         } else {
             self.output.len() as u16
         };
-        // 2 for top/bottom border + 2 for top/bottom padding + content lines
         4 + content_lines
     }
 
-    fn render_entry(&self, area: Rect, buf: &mut Buffer) {
+    fn render_to_buffer(&self, area: Rect, buf: &mut Buffer) {
         let config = Config::get();
 
         let duration_str = format_duration(self.duration);
@@ -65,7 +63,6 @@ impl CommandEntry {
             return;
         }
 
-        // Render output lines
         let truncate_width = config.layout.truncate_command_width as usize;
         let lines: Vec<Line> = self
             .output
@@ -91,36 +88,40 @@ impl CommandEntry {
 #[derive(Debug, Default)]
 pub struct CommandHistory {
     pub entries: Vec<CommandEntry>,
+    /// How many lines scrolled UP from the bottom. 0 = pinned to bottom.
     pub scroll_offset: u16,
 }
 
 impl CommandHistory {
     /// Total content height across all entries for a given width,
     /// including 1-line gaps between entries.
-    fn total_content_height(&self, width: u16) -> u16 {
+    pub fn total_content_height(&self, width: u16) -> u16 {
+        if self.entries.is_empty() {
+            return 0;
+        }
         let entry_heights: u16 = self.entries.iter().map(|e| e.rendered_height(width)).sum();
-        let gaps = self.entries.len().saturating_sub(1) as u16;
+        let gaps = (self.entries.len() - 1) as u16;
         entry_heights + gaps
     }
 
-    /// Ensure scroll is clamped to valid range and auto-scroll to bottom.
-    pub fn scroll_to_bottom(&mut self, viewport_height: u16, viewport_width: u16) {
-        let total = self.total_content_height(viewport_width);
-        if total > viewport_height {
-            self.scroll_offset = total - viewport_height;
-        } else {
-            self.scroll_offset = 0;
-        }
+    /// Maximum scroll offset (0 when content fits in viewport).
+    fn max_scroll(&self, viewport_height: u16, viewport_width: u16) -> u16 {
+        self.total_content_height(viewport_width)
+            .saturating_sub(viewport_height)
     }
 
-    pub fn scroll_up(&mut self, amount: u16) {
+    pub fn scroll_up(&mut self, amount: u16, viewport_height: u16, viewport_width: u16) {
+        let max = self.max_scroll(viewport_height, viewport_width);
+        self.scroll_offset = (self.scroll_offset + amount).min(max);
+    }
+
+    pub fn scroll_down(&mut self, amount: u16) {
         self.scroll_offset = self.scroll_offset.saturating_sub(amount);
     }
 
-    pub fn scroll_down(&mut self, amount: u16, viewport_height: u16, viewport_width: u16) {
-        let total = self.total_content_height(viewport_width);
-        let max_offset = total.saturating_sub(viewport_height);
-        self.scroll_offset = (self.scroll_offset + amount).min(max_offset);
+    /// Reset scroll to bottom (newest content visible).
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = 0;
     }
 
     pub fn add_entry(&mut self, entry: CommandEntry) {
@@ -134,51 +135,76 @@ impl Widget for &mut CommandHistory {
             return;
         }
 
-        let total_content = self.total_content_height(area.width);
-        let area_bottom = area.y + area.height;
+        let total = self.total_content_height(area.width);
 
-        // Pin content to the bottom: if content is shorter than the area,
-        // start rendering from (area_bottom - total_content) so entries
-        // are flush with the bottom edge.
-        let content_start = if total_content < area.height {
-            area_bottom - total_content
+        // Clamp scroll offset
+        let max_scroll = total.saturating_sub(area.height);
+        if self.scroll_offset > max_scroll {
+            self.scroll_offset = max_scroll;
+        }
+
+        // Build the full virtual canvas in a temp buffer, then copy the
+        // visible viewport portion to the real buffer.
+        // The virtual canvas has height = total content height.
+        if total == 0 {
+            return;
+        }
+
+        let canvas_area = Rect {
+            x: 0,
+            y: 0,
+            width: area.width,
+            height: total,
+        };
+        let mut canvas = Buffer::empty(canvas_area);
+
+        // Render all entries into the canvas
+        let mut y: u16 = 0;
+        for (i, entry) in self.entries.iter().enumerate() {
+            let h = entry.rendered_height(area.width);
+            let entry_area = Rect {
+                x: 0,
+                y,
+                width: area.width,
+                height: h,
+            };
+            entry.render_to_buffer(entry_area, &mut canvas);
+            y += h;
+            if i < self.entries.len() - 1 {
+                y += 1; // gap
+            }
+        }
+
+        // Determine which portion of the canvas is visible.
+        // scroll_offset=0 means bottom is visible.
+        // The visible window starts at (total - viewport_height - scroll_offset)
+        // from the top of the canvas.
+        let viewport_height = area.height.min(total);
+        let canvas_start = if total <= area.height {
+            0u16
+        } else {
+            total - area.height - self.scroll_offset
+        };
+
+        // When content is shorter than viewport, pin to the bottom of the area
+        let dest_y_start = if total < area.height {
+            area.y + area.height - total
         } else {
             area.y
         };
 
-        let mut y_cursor: i32 = content_start as i32 - self.scroll_offset as i32;
-
-        for (i, entry) in self.entries.iter().enumerate() {
-            let entry_height = entry.rendered_height(area.width);
-            let entry_bottom = y_cursor + entry_height as i32;
-
-            // Skip entries entirely above the viewport
-            if entry_bottom <= area.y as i32 {
-                y_cursor = entry_bottom + 1; // +1 for gap
-                continue;
-            }
-
-            // Stop if we're past the viewport
-            if y_cursor >= area_bottom as i32 {
+        // Copy visible rows from canvas to real buffer
+        for row in 0..viewport_height {
+            let src_row = canvas_start + row;
+            if src_row >= total {
                 break;
             }
-
-            // Render if the entry starts within the viewport
-            if y_cursor >= area.y as i32 {
-                let available_height = (area_bottom as i32 - y_cursor) as u16;
-                let entry_area = Rect {
-                    x: area.x,
-                    y: y_cursor as u16,
-                    width: area.width,
-                    height: entry_height.min(available_height),
-                };
-                entry.render_entry(entry_area, buf);
-            }
-
-            y_cursor = entry_bottom;
-            // Add 1-line gap between entries (not after the last one)
-            if i < self.entries.len() - 1 {
-                y_cursor += 1;
+            for col in 0..area.width {
+                if let Some(src) = canvas.cell((col, src_row))
+                    && let Some(dst) = buf.cell_mut((area.x + col, dest_y_start + row))
+                {
+                    *dst = src.clone();
+                }
             }
         }
     }

@@ -110,12 +110,22 @@ impl Widget for &CommandInput {
         // Build CWD title with last segment highlighted
         let cwd_title = cwd_to_title(&self.cwd);
 
+        let hints = Line::from(vec![
+            Span::styled(" Enter ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Send", Style::default().fg(Color::DarkGray)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+            Span::styled("PgUp/PgDn ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Scroll", Style::default().fg(Color::DarkGray)),
+            Span::raw(" "),
+        ]).alignment(ratatui::layout::Alignment::Right);
+
         let block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::DarkGray))
             .padding(Padding::horizontal(1))
-            .title(cwd_title);
+            .title(cwd_title)
+            .title_bottom(hints);
 
         let inner = block.inner(area);
         block.render(area, buf);

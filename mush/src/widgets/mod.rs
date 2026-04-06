@@ -1,5 +1,5 @@
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::{DefaultTerminal, Frame};
 use std::time::Instant;
 
@@ -25,6 +25,7 @@ pub struct App {
     pub input: CommandInput,
     pub autocomplete: Autocomplete,
     exit: bool,
+    last_history_area: Rect,
 }
 
 impl Default for App {
@@ -63,18 +64,14 @@ impl Default for App {
             input: CommandInput::default(),
             autocomplete: Autocomplete::default(),
             exit: false,
+            last_history_area: Rect::default(),
         }
     }
 }
 
 impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
-        // Initial scroll to bottom
-        let size = terminal.size()?;
-        let input_height = CommandInput::required_height();
-        let history_height = size.height.saturating_sub(input_height);
-        self.history
-            .scroll_to_bottom(history_height, size.width);
+        self.history.scroll_to_bottom();
 
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
@@ -104,6 +101,8 @@ impl App {
         // chunks[2] is the gap
         let input_area = chunks[3];
 
+        self.last_history_area = history_area;
+
         // Render command history (scrollable, fills top)
         frame.render_widget(&mut self.history, history_area);
 
@@ -118,7 +117,6 @@ impl App {
 
     fn handle_events(&mut self) -> color_eyre::Result<()> {
         if let Event::Key(key) = event::read()? {
-            // Only handle key press events (not release/repeat)
             if key.kind != KeyEventKind::Press {
                 return Ok(());
             }
@@ -143,13 +141,15 @@ impl App {
                     }
                 }
 
-                // Up/Down navigate autocomplete when visible
+                // Up/Down navigate autocomplete when visible, scroll history otherwise
                 (KeyModifiers::NONE, KeyCode::Up) if self.autocomplete.visible => {
                     self.autocomplete.select_up();
                 }
                 (KeyModifiers::NONE, KeyCode::Down) if self.autocomplete.visible => {
                     self.autocomplete.select_down();
                 }
+                (KeyModifiers::NONE, KeyCode::Up) => self.history_scroll_up(),
+                (KeyModifiers::NONE, KeyCode::Down) => self.history_scroll_down(),
 
                 // Submit command
                 (_, KeyCode::Enter) => {
@@ -171,17 +171,17 @@ impl App {
                 (_, KeyCode::Home) => self.input.home(),
                 (_, KeyCode::End) => self.input.end(),
 
-                // Character input
-                (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+                // Character input — only printable characters (filter control/escape fragments)
+                (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) if c >= ' ' => {
                     self.input.insert_char(c);
                     self.on_input_changed();
                 }
 
                 // Scroll history
-                (_, KeyCode::PageUp) => self.input_scroll_up(),
-                (_, KeyCode::PageDown) => self.input_scroll_down(),
-                (KeyModifiers::SHIFT, KeyCode::Up) => self.input_scroll_up(),
-                (KeyModifiers::SHIFT, KeyCode::Down) => self.input_scroll_down(),
+                (_, KeyCode::PageUp) => self.history_scroll_up(),
+                (_, KeyCode::PageDown) => self.history_scroll_down(),
+                (KeyModifiers::SHIFT, KeyCode::Up) => self.history_scroll_up(),
+                (KeyModifiers::SHIFT, KeyCode::Down) => self.history_scroll_down(),
 
                 _ => {}
             }
@@ -238,6 +238,7 @@ impl App {
 
         self.input.valid_command = true;
         self.input.update_cwd();
+        self.history.scroll_to_bottom();
     }
 
     /// Execute a single command string (used by alias expansion).
@@ -326,13 +327,15 @@ impl App {
         self.input.valid_command = shell::is_valid_command(&self.input.buffer);
     }
 
-    fn input_scroll_up(&mut self) {
-        self.history.scroll_up(3);
+    fn history_scroll_up(&mut self) {
+        self.history.scroll_up(
+            3,
+            self.last_history_area.height,
+            self.last_history_area.width,
+        );
     }
 
-    fn input_scroll_down(&mut self) {
-        // We need to estimate viewport size; use a reasonable default
-        // The actual size will be corrected on next draw
-        self.history.scroll_down(3, 50, 120);
+    fn history_scroll_down(&mut self) {
+        self.history.scroll_down(3);
     }
 }
