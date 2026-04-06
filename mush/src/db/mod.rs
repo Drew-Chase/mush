@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use color_eyre::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use tokio::runtime::{Builder, Runtime};
+
+use crate::shell::help_parser::CommandOption;
 
 pub struct HistoryDb {
     pool: SqlitePool,
@@ -49,6 +52,17 @@ impl HistoryDb {
 
             sqlx::query(
                 "CREATE INDEX IF NOT EXISTS idx_history_created ON command_history(created_at DESC)",
+            )
+            .execute(&pool)
+            .await?;
+
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS command_help (
+                    command_prefix TEXT PRIMARY KEY,
+                    options_json   TEXT NOT NULL,
+                    help_hash      TEXT NOT NULL,
+                    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+                )",
             )
             .execute(&pool)
             .await?;
@@ -115,6 +129,63 @@ impl HistoryDb {
                     exit_code: row.get("exit_code"),
                 })
                 .collect())
+        })
+    }
+
+    pub fn get_help_hash(&self, command_prefix: &str) -> Result<Option<String>> {
+        self.rt.block_on(async {
+            let row = sqlx::query(
+                "SELECT help_hash FROM command_help WHERE command_prefix = ?1",
+            )
+            .bind(command_prefix)
+            .fetch_optional(&self.pool)
+            .await?;
+
+            Ok(row.map(|r| r.get("help_hash")))
+        })
+    }
+
+    pub fn upsert_help(
+        &self,
+        command_prefix: &str,
+        options: &[CommandOption],
+        help_hash: &str,
+    ) -> Result<()> {
+        self.rt.block_on(async {
+            let json = serde_json::to_string(options)
+                .map_err(|e| color_eyre::eyre::eyre!("JSON serialize error: {e}"))?;
+            sqlx::query(
+                "INSERT INTO command_help (command_prefix, options_json, help_hash)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(command_prefix) DO UPDATE SET
+                    options_json = excluded.options_json,
+                    help_hash = excluded.help_hash,
+                    updated_at = datetime('now')",
+            )
+            .bind(command_prefix)
+            .bind(&json)
+            .bind(help_hash)
+            .execute(&self.pool)
+            .await?;
+            Ok(())
+        })
+    }
+
+    pub fn load_all_help(&self) -> Result<HashMap<String, Vec<CommandOption>>> {
+        self.rt.block_on(async {
+            let rows = sqlx::query("SELECT command_prefix, options_json FROM command_help")
+                .fetch_all(&self.pool)
+                .await?;
+
+            let mut map = HashMap::new();
+            for row in rows {
+                let prefix: String = row.get("command_prefix");
+                let json: String = row.get("options_json");
+                if let Ok(options) = serde_json::from_str::<Vec<CommandOption>>(&json) {
+                    map.insert(prefix, options);
+                }
+            }
+            Ok(map)
         })
     }
 }

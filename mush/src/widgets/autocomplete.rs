@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Widget};
 
 use crate::shell;
+use crate::shell::help_parser::{CommandOption, OptionKind};
 
 const MAX_VISIBLE: usize = 10;
 
@@ -19,16 +20,15 @@ pub struct Autocomplete {
     pub suggestions: Vec<Suggestion>,
     pub selected: usize,
     pub visible: bool,
+    current_prefix: Option<String>,
 }
 
 impl Autocomplete {
-    /// Update suggestions based on the current input buffer.
-    /// Only autocompletes the first token (command name).
     pub fn update(&mut self, input: &str) {
+        self.current_prefix = None;
+
         let query = input.split_whitespace().next().unwrap_or("");
 
-        // Don't show autocomplete if input has spaces (already past command name)
-        // or if query is empty
         if query.is_empty() || input.contains(' ') {
             self.visible = false;
             self.suggestions.clear();
@@ -55,7 +55,65 @@ impl Autocomplete {
             })
             .collect();
 
-        // Sort by score descending, then alphabetically
+        matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.name.cmp(&b.0.name)));
+
+        self.suggestions = matches.into_iter().map(|(s, _)| s).collect();
+        self.selected = 0;
+        self.visible = !self.suggestions.is_empty();
+    }
+
+    pub fn update_with_help(
+        &mut self,
+        partial: &str,
+        options: Option<&Vec<CommandOption>>,
+        prefix: &str,
+    ) {
+        self.current_prefix = Some(prefix.to_string());
+
+        let options = match options {
+            Some(opts) if !opts.is_empty() => opts,
+            _ => {
+                self.visible = false;
+                self.suggestions.clear();
+                self.selected = 0;
+                return;
+            }
+        };
+
+        let query_lower = partial.to_lowercase();
+
+        let mut matches: Vec<(Suggestion, i32)> = options
+            .iter()
+            .filter_map(|opt| {
+                if partial.is_empty() {
+                    Some((
+                        Suggestion {
+                            name: opt.name.clone(),
+                            description: opt.description.clone(),
+                        },
+                        if opt.kind == OptionKind::Subcommand {
+                            100
+                        } else {
+                            50
+                        },
+                    ))
+                } else {
+                    let score = fuzzy_score(&query_lower, &opt.name.to_lowercase());
+                    if score > 0 {
+                        Some((
+                            Suggestion {
+                                name: opt.name.clone(),
+                                description: opt.description.clone(),
+                            },
+                            score,
+                        ))
+                    } else {
+                        None
+                    }
+                }
+            })
+            .collect();
+
         matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.name.cmp(&b.0.name)));
 
         self.suggestions = matches.into_iter().map(|(s, _)| s).collect();
@@ -81,7 +139,11 @@ impl Autocomplete {
 
     pub fn accept(&mut self) -> Option<String> {
         if self.visible && self.selected < self.suggestions.len() {
-            let result = self.suggestions[self.selected].name.clone();
+            let name = &self.suggestions[self.selected].name;
+            let result = match &self.current_prefix {
+                Some(prefix) => format!("{prefix} {name}"),
+                None => name.clone(),
+            };
             self.close();
             Some(result)
         } else {
@@ -93,14 +155,13 @@ impl Autocomplete {
         self.visible = false;
         self.suggestions.clear();
         self.selected = 0;
+        self.current_prefix = None;
     }
 
-    /// Height needed for the popup (capped at MAX_VISIBLE).
     pub fn popup_height(&self) -> u16 {
         if !self.visible {
             return 0;
         }
-        // +2 for borders
         (self.suggestions.len().min(MAX_VISIBLE) as u16) + 2
     }
 }
@@ -113,28 +174,29 @@ impl Widget for &Autocomplete {
 
         let visible_count = self.suggestions.len().min(MAX_VISIBLE);
 
-        // Determine the scroll window so selected item is always visible
         let scroll_start = if self.selected >= visible_count {
             self.selected - visible_count + 1
         } else {
             0
         };
 
-        // Calculate the inner width for description alignment
-        // area.width - 2 for borders - 2 for padding
         let inner_width = area.width.saturating_sub(4) as usize;
 
-        let items: Vec<ListItem> = self.suggestions
+        let items: Vec<ListItem> = self
+            .suggestions
             .iter()
             .enumerate()
             .skip(scroll_start)
             .take(visible_count)
             .map(|(i, suggestion)| {
                 let is_selected = i == self.selected;
-                let bg = if is_selected { Color::DarkGray } else { Color::Reset };
+                let bg = if is_selected {
+                    Color::DarkGray
+                } else {
+                    Color::Reset
+                };
 
                 let line = if let Some(desc) = &suggestion.description {
-                    // Truncate description to fit
                     let name_len = suggestion.name.len();
                     let sep = "  ";
                     let available = inner_width.saturating_sub(name_len + sep.len());
@@ -147,7 +209,10 @@ impl Widget for &Autocomplete {
                     };
 
                     Line::from(vec![
-                        Span::styled(&suggestion.name, Style::default().fg(Color::White).bg(bg)),
+                        Span::styled(
+                            &suggestion.name,
+                            Style::default().fg(Color::White).bg(bg),
+                        ),
                         Span::styled(sep, Style::default().bg(bg)),
                         Span::styled(truncated, Style::default().fg(Color::DarkGray).bg(bg)),
                     ])
@@ -172,25 +237,17 @@ impl Widget for &Autocomplete {
     }
 }
 
-/// Fuzzy scoring: checks if all characters of `query` appear in order in
-/// `candidate`. Higher scores for:
-/// - Exact match or prefix match (huge bonus)
-/// - Consecutive character matches
-/// - Shorter candidates (penalize length difference)
 fn fuzzy_score(query: &str, candidate: &str) -> i32 {
     if query.is_empty() {
         return 0;
     }
 
-    // Strip extension for matching purposes (e.g. "cargo.exe" -> "cargo")
     let base = candidate.split('.').next().unwrap_or(candidate);
 
-    // Exact match on the base name
     if base == query {
         return 1000;
     }
 
-    // Prefix match on the base name (e.g. "car" matches "cargo")
     let prefix_bonus = if base.starts_with(query) { 500 } else { 0 };
 
     let query_chars: Vec<char> = query.chars().collect();
@@ -202,13 +259,11 @@ fn fuzzy_score(query: &str, candidate: &str) -> i32 {
 
     for (ci, &cc) in candidate_chars.iter().enumerate() {
         if qi < query_chars.len() && cc == query_chars[qi] {
-            // Bonus for matching at the start position
             if ci == qi {
                 score += 3;
             } else {
                 score += 1;
             }
-            // Bonus for consecutive matches
             if let Some(prev) = prev_match_idx
                 && ci == prev + 1
             {
@@ -219,12 +274,10 @@ fn fuzzy_score(query: &str, candidate: &str) -> i32 {
         }
     }
 
-    // All query chars must match
     if qi < query_chars.len() {
         return 0;
     }
 
-    // Penalize longer names — shorter matches are more relevant
     let length_penalty = (candidate.len() as i32 - query.len() as i32).abs();
 
     score + prefix_bonus - length_penalty

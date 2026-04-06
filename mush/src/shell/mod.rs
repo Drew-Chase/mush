@@ -1,4 +1,5 @@
 pub mod builtins;
+pub mod help_parser;
 pub mod path_resolver;
 
 use std::path::{Path, PathBuf};
@@ -98,7 +99,12 @@ pub fn is_valid_command(input: &str) -> bool {
     path_resolver::is_executable(name)
 }
 
-pub fn is_interactive(cmd_name: &str) -> bool {
+pub fn is_interactive(cmd_name: &str, args: &[&str]) -> bool {
+    const NON_INTERACTIVE_FLAGS: &[&str] = &["--help", "-h", "-?", "--version", "-V"];
+    if args.iter().any(|a| NON_INTERACTIVE_FLAGS.contains(a)) {
+        return false;
+    }
+
     let stem = Path::new(cmd_name)
         .file_stem()
         .and_then(|s| s.to_str())

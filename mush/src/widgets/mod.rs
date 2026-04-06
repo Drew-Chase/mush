@@ -1,6 +1,8 @@
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::{DefaultTerminal, Frame};
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::process::{Child, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -19,6 +21,7 @@ use history_popover::HistoryPopover;
 use crate::config::Config;
 use crate::db::HistoryDb;
 use crate::shell;
+use crate::shell::help_parser::{self, CommandOption};
 
 struct ExecResult {
     output: Vec<String>,
@@ -39,6 +42,17 @@ struct RunningCommand {
     start: Instant,
 }
 
+struct HelpResult {
+    command_prefix: String,
+    raw_output: String,
+}
+
+struct PendingHelpLookup {
+    command_prefix: String,
+    rx: Receiver<HelpResult>,
+}
+
+const MAX_PENDING_LOOKUPS: usize = 3;
 
 pub struct App {
     pub history: CommandHistory,
@@ -50,6 +64,9 @@ pub struct App {
     last_history_area: Rect,
     running_command: Option<RunningCommand>,
     needs_clear: bool,
+    help_cache: HashMap<String, Vec<CommandOption>>,
+    pending_help_lookups: Vec<PendingHelpLookup>,
+    last_help_prefix: Option<String>,
 }
 
 impl Drop for App {
@@ -65,6 +82,7 @@ impl App {
     pub fn new() -> color_eyre::Result<Self> {
         let db_path = Config::get().db_path();
         let db = HistoryDb::open(&db_path)?;
+        let help_cache = db.load_all_help().unwrap_or_default();
 
         let mut history = CommandHistory::default();
 
@@ -103,6 +121,9 @@ impl App {
             last_history_area: Rect::default(),
             running_command: None,
             needs_clear: false,
+            help_cache,
+            pending_help_lookups: Vec::new(),
+            last_help_prefix: None,
         })
     }
 
@@ -119,9 +140,15 @@ impl App {
                 self.drain_running_output();
             }
 
+            if !self.pending_help_lookups.is_empty() {
+                self.drain_help_lookups();
+            }
+
             terminal.draw(|frame| self.draw(frame))?;
 
-            if self.running_command.is_some() {
+            let needs_poll =
+                self.running_command.is_some() || !self.pending_help_lookups.is_empty();
+            if needs_poll {
                 if event::poll(Duration::from_millis(16))? {
                     self.handle_events()?;
                 }
@@ -374,7 +401,6 @@ impl App {
                         self.exit = true;
                     }
                 }
-                // None means running_command was set — event loop takes over
             }
         }
 
@@ -385,7 +411,6 @@ impl App {
 
     fn execute_single(&mut self, input: &str) -> ExecResult {
         let resolved = shell::resolve_command(input);
-        // Aliases use synchronous execution
         self.dispatch_resolved_sync(resolved, input)
     }
 
@@ -400,7 +425,7 @@ impl App {
 
         match kind {
             shell::CommandKind::External(ref path)
-                if !parts.is_empty() && shell::is_interactive(parts[0]) =>
+                if !parts.is_empty() && shell::is_interactive(parts[0], args) =>
             {
                 Some(self.run_interactive(path, args))
             }
@@ -464,8 +489,6 @@ impl App {
                             });
                         }
 
-                        // Drop the original sender so Disconnected fires
-                        // when both reader threads finish
                         drop(tx);
 
                         self.running_command = Some(RunningCommand {
@@ -489,11 +512,7 @@ impl App {
         }
     }
 
-    fn dispatch_resolved_sync(
-        &mut self,
-        kind: shell::CommandKind,
-        input: &str,
-    ) -> ExecResult {
+    fn dispatch_resolved_sync(&mut self, kind: shell::CommandKind, input: &str) -> ExecResult {
         let parts: Vec<&str> = input.split_whitespace().collect();
         let args = if parts.len() > 1 { &parts[1..] } else { &[] };
 
@@ -671,7 +690,215 @@ impl App {
 
     fn on_input_changed(&mut self) {
         self.validate_input();
-        self.autocomplete.update(&self.input.buffer);
+
+        let input = self.input.buffer.clone();
+        let has_space = input.contains(' ');
+
+        if has_space {
+            let tokens: Vec<&str> = input.split_whitespace().collect();
+            let ends_with_space = input.ends_with(' ');
+
+            let (prefix_tokens, partial) = if ends_with_space {
+                (tokens.as_slice(), "")
+            } else if tokens.len() > 1 {
+                (&tokens[..tokens.len() - 1], tokens[tokens.len() - 1])
+            } else {
+                self.autocomplete.update(&input);
+                return;
+            };
+
+            let prefix = prefix_tokens.join(" ");
+
+            if !prefix.is_empty() {
+                let should_spawn = match &self.last_help_prefix {
+                    Some(last) => *last != prefix,
+                    None => true,
+                };
+
+                if should_spawn {
+                    self.last_help_prefix = Some(prefix.clone());
+                    self.spawn_help_lookup(prefix.clone());
+                }
+
+                self.autocomplete.update_with_help(
+                    partial,
+                    self.help_cache.get(&prefix),
+                    &prefix,
+                );
+            } else {
+                self.autocomplete.update(&input);
+            }
+        } else {
+            self.last_help_prefix = None;
+            self.autocomplete.update(&input);
+        }
+    }
+
+    fn spawn_help_lookup(&mut self, command_prefix: String) {
+        if self.pending_help_lookups.len() >= MAX_PENDING_LOOKUPS {
+            return;
+        }
+
+        if self
+            .pending_help_lookups
+            .iter()
+            .any(|p| p.command_prefix == command_prefix)
+        {
+            return;
+        }
+
+        let parts: Vec<&str> = command_prefix.split_whitespace().collect();
+        if parts.is_empty() {
+            return;
+        }
+
+        let base_cmd = parts[0];
+
+        if shell::builtins::lookup(base_cmd).is_some() {
+            return;
+        }
+
+        let path = match shell::path_resolver::find_in_path(base_cmd) {
+            Some(p) => p,
+            None => return,
+        };
+
+        let sub_args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+        let prefix_clone = command_prefix.clone();
+
+        let (tx, rx) = mpsc::channel::<HelpResult>();
+
+        std::thread::spawn(move || {
+            let try_help = |flag: &str| -> Option<String> {
+                let mut child = std::process::Command::new(&path)
+                    .args(&sub_args)
+                    .arg(flag)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .ok()?;
+
+                let start = Instant::now();
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(_)) => break,
+                        Ok(None) => {
+                            if start.elapsed() > Duration::from_secs(3) {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                return None;
+                            }
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        Err(_) => return None,
+                    }
+                }
+
+                let mut stdout = String::new();
+                if let Some(mut out) = child.stdout.take() {
+                    let _ = out.read_to_string(&mut stdout);
+                }
+                let mut stderr = String::new();
+                if let Some(mut err) = child.stderr.take() {
+                    let _ = err.read_to_string(&mut stderr);
+                }
+
+                let result = if stdout.len() >= stderr.len() {
+                    stdout
+                } else {
+                    stderr
+                };
+
+                if result.len() > 20 { Some(result) } else { None }
+            };
+
+            let raw = try_help("--help").or_else(|| try_help("-h"));
+
+            if let Some(raw) = raw {
+                let _ = tx.send(HelpResult {
+                    raw_output: raw,
+                    command_prefix: prefix_clone,
+                });
+            }
+        });
+
+        self.pending_help_lookups.push(PendingHelpLookup {
+            command_prefix,
+            rx,
+        });
+    }
+
+    fn drain_help_lookups(&mut self) {
+        let mut completed = Vec::new();
+
+        let mut i = 0;
+        while i < self.pending_help_lookups.len() {
+            match self.pending_help_lookups[i].rx.try_recv() {
+                Ok(result) => {
+                    self.pending_help_lookups.remove(i);
+                    completed.push(result);
+                }
+                Err(TryRecvError::Empty) => {
+                    i += 1;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.pending_help_lookups.remove(i);
+                }
+            }
+        }
+
+        for result in &completed {
+            if result.raw_output.is_empty() {
+                continue;
+            }
+
+            let new_hash = compute_help_hash(&result.raw_output);
+            let options = help_parser::parse_help_output(&result.raw_output);
+
+            if options.is_empty() {
+                continue;
+            }
+
+            let should_write = match self.db.get_help_hash(&result.command_prefix) {
+                Ok(Some(existing_hash)) => existing_hash != new_hash,
+                _ => true,
+            };
+
+            if should_write {
+                let _ = self.db.upsert_help(&result.command_prefix, &options, &new_hash);
+            }
+
+            self.help_cache
+                .insert(result.command_prefix.clone(), options);
+        }
+
+        if !completed.is_empty() {
+            self.refresh_autocomplete();
+        }
+    }
+
+    fn refresh_autocomplete(&mut self) {
+        let input = &self.input.buffer;
+        if !input.contains(' ') {
+            return;
+        }
+
+        let tokens: Vec<&str> = input.split_whitespace().collect();
+        let ends_with_space = input.ends_with(' ');
+
+        let (prefix_tokens, partial) = if ends_with_space {
+            (tokens.as_slice(), "")
+        } else if tokens.len() > 1 {
+            (&tokens[..tokens.len() - 1], tokens[tokens.len() - 1])
+        } else {
+            return;
+        };
+
+        let prefix = prefix_tokens.join(" ");
+        if !prefix.is_empty() {
+            self.autocomplete
+                .update_with_help(partial, self.help_cache.get(&prefix), &prefix);
+        }
     }
 
     fn validate_input(&mut self) {
@@ -689,4 +916,10 @@ impl App {
     fn history_scroll_down(&mut self) {
         self.history.scroll_down(3);
     }
+}
+
+fn compute_help_hash(text: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
