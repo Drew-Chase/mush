@@ -57,8 +57,8 @@ impl Config {
         self._save_path
             .as_ref()
             .and_then(|p| p.parent())
-            .map(|dir| dir.join(".db"))
-            .unwrap_or_else(|| PathBuf::from(".db"))
+            .map(|dir| dir.join("mush.db"))
+            .unwrap_or_else(|| crate::get_appdata_path().join("mush.db"))
     }
 
     /// Saves the current config to the path it was loaded from.
