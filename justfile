@@ -30,3 +30,6 @@ package: clean
 [windows]
 installer: package
     makensis nsis\installer.nsis
+
+install:
+    cargo install --bin mush --path ./mush/
