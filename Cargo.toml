@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/cat", "crates/cp", "crates/cut", "crates/echo", "crates/head", "crates/ls", "crates/mkdir", "crates/mv", "crates/rm", "crates/sleep", "crates/sort", "crates/tail", "crates/uniq", "crates/wc", "crates/whoami", "mush"]
+members = ["crates/cat", "crates/cp", "crates/cut", "crates/date", "crates/echo", "crates/head", "crates/kill", "crates/ls", "crates/mkdir", "crates/mv", "crates/rm", "crates/sleep", "crates/sort", "crates/tail", "crates/touch", "crates/uniq", "crates/wc", "crates/whoami", "mush"]
 
 [profile.release]
 codegen-units = 1
