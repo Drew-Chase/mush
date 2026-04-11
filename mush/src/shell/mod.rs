@@ -89,6 +89,15 @@ pub fn all_commands() -> Vec<CommandInfo> {
     commands.push(CommandInfo { name: "source".to_string(), description: Some("(builtin) Execute commands from file".to_string()) });
     commands.push(CommandInfo { name: "read".to_string(), description: Some("(builtin) Read input into variable".to_string()) });
     commands.push(CommandInfo { name: "test".to_string(), description: Some("(builtin) Evaluate expressions".to_string()) });
+    commands.push(CommandInfo { name: "true".to_string(), description: Some("(builtin) Return success".to_string()) });
+    commands.push(CommandInfo { name: "false".to_string(), description: Some("(builtin) Return failure".to_string()) });
+    commands.push(CommandInfo { name: "printenv".to_string(), description: Some("(builtin) Print environment variables".to_string()) });
+    commands.push(CommandInfo { name: "pushd".to_string(), description: Some("(builtin) Push directory onto stack".to_string()) });
+    commands.push(CommandInfo { name: "popd".to_string(), description: Some("(builtin) Pop directory from stack".to_string()) });
+    commands.push(CommandInfo { name: "set".to_string(), description: Some("(builtin) Set shell options".to_string()) });
+    commands.push(CommandInfo { name: "jobs".to_string(), description: Some("(builtin) List background jobs".to_string()) });
+    commands.push(CommandInfo { name: "fg".to_string(), description: Some("(builtin) Bring job to foreground".to_string()) });
+    commands.push(CommandInfo { name: "bg".to_string(), description: Some("(builtin) Resume job in background".to_string()) });
 
     // Scripts
     for entry in script_registry::list_scripts() {

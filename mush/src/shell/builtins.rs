@@ -1,4 +1,9 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+static DIR_STACK: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+static SHELL_OPTIONS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Copy)]
 pub enum BuiltinCommand {
@@ -18,6 +23,15 @@ pub enum BuiltinCommand {
     Source,
     Read,
     Test,
+    True,
+    False,
+    Printenv,
+    Pushd,
+    Popd,
+    Set,
+    Jobs,
+    Fg,
+    Bg,
 }
 
 pub struct BuiltinResult {
@@ -45,6 +59,15 @@ pub fn lookup(name: &str) -> Option<BuiltinCommand> {
         "source" | "." => Some(BuiltinCommand::Source),
         "read" => Some(BuiltinCommand::Read),
         "test" | "[" => Some(BuiltinCommand::Test),
+        "true" => Some(BuiltinCommand::True),
+        "false" => Some(BuiltinCommand::False),
+        "printenv" => Some(BuiltinCommand::Printenv),
+        "pushd" => Some(BuiltinCommand::Pushd),
+        "popd" => Some(BuiltinCommand::Popd),
+        "set" => Some(BuiltinCommand::Set),
+        "jobs" => Some(BuiltinCommand::Jobs),
+        "fg" => Some(BuiltinCommand::Fg),
+        "bg" => Some(BuiltinCommand::Bg),
         _ => None,
     }
 }
@@ -72,6 +95,20 @@ pub fn execute(cmd: BuiltinCommand, args: &[String]) -> BuiltinResult {
         BuiltinCommand::Source => execute_source(args),
         BuiltinCommand::Read => execute_read(args),
         BuiltinCommand::Test => execute_test(args),
+        BuiltinCommand::True => ok(Vec::new()),
+        BuiltinCommand::False => BuiltinResult {
+            output: Vec::new(),
+            exit_app: false,
+            change_dir: None,
+            exit_code: 1,
+        },
+        BuiltinCommand::Printenv => execute_printenv(args),
+        BuiltinCommand::Pushd => execute_pushd(args),
+        BuiltinCommand::Popd => execute_popd(args),
+        BuiltinCommand::Set => execute_set(args),
+        // Jobs/fg/bg are handled as special cases in widgets/mod.rs
+        // These stubs are unreachable in practice
+        BuiltinCommand::Jobs | BuiltinCommand::Fg | BuiltinCommand::Bg => ok(Vec::new()),
     }
 }
 
@@ -1022,6 +1059,195 @@ fn is_executable(path: &Path) -> bool {
             false
         }
     }
+}
+
+// ── printenv ────────────────────────────────────────────────────────────────
+
+fn execute_printenv(args: &[String]) -> BuiltinResult {
+    let names: Vec<&str> = args.iter().map(|s| s.as_str()).filter(|s| !s.starts_with('-')).collect();
+
+    if names.is_empty() {
+        // Print all env vars
+        let mut vars: Vec<(String, String)> = std::env::vars().collect();
+        vars.sort_by(|a, b| a.0.cmp(&b.0));
+        let lines: Vec<String> = vars.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        return ok(lines);
+    }
+
+    let mut output = Vec::new();
+    let mut exit_code = 0;
+    for name in &names {
+        match std::env::var(name) {
+            Ok(value) => output.push(value),
+            Err(_) => exit_code = 1,
+        }
+    }
+    BuiltinResult { output, exit_app: false, change_dir: None, exit_code }
+}
+
+// ── pushd / popd ────────────────────────────────────────────────────────────
+
+fn execute_pushd(args: &[String]) -> BuiltinResult {
+    let current = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(e) => return fail(format!("pushd: {e}")),
+    };
+
+    if args.is_empty() {
+        // No args: swap top two directories
+        let mut stack = DIR_STACK.lock().unwrap();
+        if let Some(top) = stack.pop() {
+            stack.push(current);
+            match std::env::set_current_dir(&top) {
+                Ok(()) => {
+                    let new_cwd = std::env::current_dir().unwrap_or(top);
+                    BuiltinResult {
+                        output: vec![new_cwd.to_string_lossy().to_string()],
+                        exit_app: false,
+                        change_dir: Some(new_cwd),
+                        exit_code: 0,
+                    }
+                }
+                Err(e) => fail(format!("pushd: {e}")),
+            }
+        } else {
+            fail("pushd: no other directory".to_string())
+        }
+    } else {
+        let target = PathBuf::from(&args[0]);
+        DIR_STACK.lock().unwrap().push(current);
+        match std::env::set_current_dir(&target) {
+            Ok(()) => {
+                let new_cwd = std::env::current_dir().unwrap_or(target);
+                BuiltinResult {
+                    output: vec![new_cwd.to_string_lossy().to_string()],
+                    exit_app: false,
+                    change_dir: Some(new_cwd),
+                    exit_code: 0,
+                }
+            }
+            Err(e) => {
+                // Undo the push since cd failed
+                DIR_STACK.lock().unwrap().pop();
+                fail(format!("pushd: {}: {e}", args[0]))
+            }
+        }
+    }
+}
+
+fn execute_popd(_args: &[String]) -> BuiltinResult {
+    let mut stack = DIR_STACK.lock().unwrap();
+    match stack.pop() {
+        Some(dir) => {
+            drop(stack); // release lock before set_current_dir
+            match std::env::set_current_dir(&dir) {
+                Ok(()) => {
+                    let new_cwd = std::env::current_dir().unwrap_or(dir);
+                    BuiltinResult {
+                        output: vec![new_cwd.to_string_lossy().to_string()],
+                        exit_app: false,
+                        change_dir: Some(new_cwd),
+                        exit_code: 0,
+                    }
+                }
+                Err(e) => fail(format!("popd: {e}")),
+            }
+        }
+        None => fail("popd: directory stack empty".to_string()),
+    }
+}
+
+// ── set ─────────────────────────────────────────────────────────────────────
+
+const KNOWN_OPTIONS: &[(&str, &str)] = &[
+    ("errexit", "e"),
+    ("nounset", "u"),
+    ("xtrace", "x"),
+    ("pipefail", ""),
+];
+
+fn get_shell_options() -> HashSet<String> {
+    let guard = SHELL_OPTIONS.lock().unwrap();
+    guard.clone().unwrap_or_default()
+}
+
+fn set_shell_option(name: &str, enabled: bool) {
+    let mut guard = SHELL_OPTIONS.lock().unwrap();
+    let opts = guard.get_or_insert_with(HashSet::new);
+    if enabled {
+        opts.insert(name.to_string());
+    } else {
+        opts.remove(name);
+    }
+}
+
+/// Check if a shell option is enabled (for use by other modules).
+#[allow(dead_code)]
+pub fn has_option(name: &str) -> bool {
+    let guard = SHELL_OPTIONS.lock().unwrap();
+    guard.as_ref().is_some_and(|opts| opts.contains(name))
+}
+
+fn execute_set(args: &[String]) -> BuiltinResult {
+    if args.is_empty() {
+        // No args: print all env vars sorted
+        let mut vars: Vec<(String, String)> = std::env::vars().collect();
+        vars.sort_by(|a, b| a.0.cmp(&b.0));
+        let lines: Vec<String> = vars.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        return ok(lines);
+    }
+
+    let mut i = 0;
+    let mut output = Vec::new();
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-o" {
+            i += 1;
+            if i < args.len() {
+                set_shell_option(&args[i], true);
+            } else {
+                // -o with no arg: list all options
+                let opts = get_shell_options();
+                for (name, _) in KNOWN_OPTIONS {
+                    let state = if opts.contains(*name) { "on" } else { "off" };
+                    output.push(format!("{name:15} {state}"));
+                }
+            }
+        } else if arg == "+o" {
+            i += 1;
+            if i < args.len() {
+                set_shell_option(&args[i], false);
+            }
+        } else if let Some(flag) = arg.strip_prefix('-') {
+            // -e, -u, -x etc.
+            for ch in flag.chars() {
+                match ch {
+                    'e' => set_shell_option("errexit", true),
+                    'u' => set_shell_option("nounset", true),
+                    'x' => set_shell_option("xtrace", true),
+                    _ => {
+                        output.push(format!("set: unknown option: -{ch}"));
+                        return BuiltinResult { output, exit_app: false, change_dir: None, exit_code: 1 };
+                    }
+                }
+            }
+        } else if let Some(flag) = arg.strip_prefix('+') {
+            for ch in flag.chars() {
+                match ch {
+                    'e' => set_shell_option("errexit", false),
+                    'u' => set_shell_option("nounset", false),
+                    'x' => set_shell_option("xtrace", false),
+                    _ => {
+                        output.push(format!("set: unknown option: +{ch}"));
+                        return BuiltinResult { output, exit_app: false, change_dir: None, exit_code: 1 };
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+
+    ok(output)
 }
 
 pub(crate) fn home_dir() -> Option<PathBuf> {

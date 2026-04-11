@@ -673,6 +673,31 @@ impl App {
                 self.last_exit_code = 0;
                 return;
             }
+
+            // Job control builtins need App access
+            if let Some(ref name) = first_word {
+                let cmd_args: Vec<String> = pipeline.commands[0]
+                    .words
+                    .iter()
+                    .skip(1)
+                    .map(|w| w.to_plain_string())
+                    .collect();
+                match name.as_str() {
+                    "jobs" => {
+                        self.execute_jobs_builtin(&cmd_args, command_display, start);
+                        return;
+                    }
+                    "fg" => {
+                        self.execute_fg_builtin(&cmd_args, command_display, start);
+                        return;
+                    }
+                    "bg" => {
+                        self.execute_bg_builtin(&cmd_args, command_display, start);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
         }
 
         match shell::pipeline::execute_pipeline(pipeline, self.interactive_mode) {
@@ -726,6 +751,119 @@ impl App {
     }
 
     /// Wait for a running streaming pipeline to complete (blocking).
+    fn execute_jobs_builtin(&mut self, args: &[String], command_display: &str, start: Instant) {
+        let show_pid = args.iter().any(|a| a == "-l" || a == "--long");
+        let mut output = Vec::new();
+
+        for job in &self.background_jobs {
+            if show_pid {
+                let pid = job.last_child.id();
+                output.push(format!("[{}]  {}  Running  {}", job.job_id, pid, job.command));
+            } else {
+                output.push(format!("[{}]  Running  {}", job.job_id, job.command));
+            }
+        }
+
+        if output.is_empty() {
+            output.push("No background jobs.".to_string());
+        }
+
+        let duration = start.elapsed();
+        self.last_exit_code = 0;
+        self.history.add_entry(CommandEntry {
+            command: command_display.to_string(),
+            output,
+            duration,
+            exit_code: 0,
+        });
+    }
+
+    fn execute_fg_builtin(&mut self, args: &[String], command_display: &str, start: Instant) {
+        // Parse job spec: %N, N, or default (last job)
+        let job_id = if let Some(spec) = args.first() {
+            let s = spec.strip_prefix('%').unwrap_or(spec);
+            s.parse::<u32>().ok()
+        } else {
+            self.background_jobs.last().map(|j| j.job_id)
+        };
+
+        let job_id = match job_id {
+            Some(id) => id,
+            None => {
+                let duration = start.elapsed();
+                self.last_exit_code = 1;
+                self.history.add_entry(CommandEntry {
+                    command: command_display.to_string(),
+                    output: vec!["fg: no current job".to_string()],
+                    duration,
+                    exit_code: 1,
+                });
+                return;
+            }
+        };
+
+        let idx = self.background_jobs.iter().position(|j| j.job_id == job_id);
+        match idx {
+            Some(i) => {
+                let job = self.background_jobs.remove(i);
+                let spawn = shell::pipeline::StreamingSpawn {
+                    children: job.children,
+                    last_child: job.last_child,
+                    stdin_data: None,
+                };
+                self.history.add_entry(CommandEntry {
+                    command: command_display.to_string(),
+                    output: vec![format!("[{}] {} brought to foreground", job.job_id, job.command)],
+                    duration: start.elapsed(),
+                    exit_code: 0,
+                });
+                self.spawn_streaming_pipeline(&job.command, spawn);
+            }
+            None => {
+                let duration = start.elapsed();
+                self.last_exit_code = 1;
+                self.history.add_entry(CommandEntry {
+                    command: command_display.to_string(),
+                    output: vec![format!("fg: %{job_id}: no such job")],
+                    duration,
+                    exit_code: 1,
+                });
+            }
+        }
+    }
+
+    fn execute_bg_builtin(&mut self, args: &[String], command_display: &str, start: Instant) {
+        let job_id = if let Some(spec) = args.first() {
+            let s = spec.strip_prefix('%').unwrap_or(spec);
+            s.parse::<u32>().ok()
+        } else {
+            self.background_jobs.last().map(|j| j.job_id)
+        };
+
+        let output = match job_id {
+            Some(id) => {
+                if let Some(job) = self.background_jobs.iter().find(|j| j.job_id == id) {
+                    vec![format!("[{}] {} &", job.job_id, job.command)]
+                } else {
+                    self.last_exit_code = 1;
+                    vec![format!("bg: %{id}: no such job")]
+                }
+            }
+            None => {
+                self.last_exit_code = 1;
+                vec!["bg: no current job".to_string()]
+            }
+        };
+
+        let duration = start.elapsed();
+        self.history.add_entry(CommandEntry {
+            command: command_display.to_string(),
+            output,
+            duration,
+            exit_code: self.last_exit_code,
+        });
+    }
+
     fn wait_for_running_pipeline(&mut self) {
         if let Some(mut running) = self.running_pipeline.take() {
             // Drain remaining output
