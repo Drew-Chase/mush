@@ -1,6 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph, Widget, Wrap};
 use std::time::Duration;
@@ -100,7 +100,8 @@ fn compute_content_height(output: &[String], width: u16) -> u16 {
                 if line.is_empty() {
                     1u16
                 } else {
-                    ((line.len() as f64 / inner_width as f64).ceil() as u16).max(1)
+                    let vw = visible_width(line).max(1);
+                    ((vw as f64 / inner_width as f64).ceil() as u16).max(1)
                 }
             })
             .sum()
@@ -109,17 +110,247 @@ fn compute_content_height(output: &[String], width: u16) -> u16 {
     }
 }
 
+/// Counts visible characters in a string, skipping ANSI escape sequences.
+fn visible_width(s: &str) -> usize {
+    let mut width = 0;
+    let mut in_escape = false;
+    for c in s.chars() {
+        if in_escape {
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else if c == '\x1b' {
+            in_escape = true;
+        } else {
+            width += 1;
+        }
+    }
+    width
+}
+
+/// Truncates a string to `max_visible` visible characters, preserving ANSI escape sequences.
+fn ansi_truncate(s: &str, max_visible: usize) -> String {
+    let mut result = String::new();
+    let mut visible = 0;
+    let mut in_escape = false;
+    for c in s.chars() {
+        if in_escape {
+            result.push(c);
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else if c == '\x1b' {
+            in_escape = true;
+            result.push(c);
+        } else if visible < max_visible {
+            result.push(c);
+            visible += 1;
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+/// Maps ANSI standard color codes (0-7) to ratatui colors.
+fn ansi_color(code: u8) -> Color {
+    match code {
+        0 => Color::Black,
+        1 => Color::Red,
+        2 => Color::Green,
+        3 => Color::Yellow,
+        4 => Color::Blue,
+        5 => Color::Magenta,
+        6 => Color::Cyan,
+        7 => Color::Gray,
+        _ => Color::Reset,
+    }
+}
+
+/// Maps ANSI bright color codes (0-7) to ratatui colors.
+fn ansi_bright_color(code: u8) -> Color {
+    match code {
+        0 => Color::DarkGray,
+        1 => Color::LightRed,
+        2 => Color::LightGreen,
+        3 => Color::LightYellow,
+        4 => Color::LightBlue,
+        5 => Color::LightMagenta,
+        6 => Color::LightCyan,
+        7 => Color::White,
+        _ => Color::Reset,
+    }
+}
+
+/// Parses a string containing ANSI escape codes into a styled ratatui `Line`.
+fn parse_ansi_line(input: &str) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut current_text = String::new();
+    let mut current_style = Style::default();
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Check for CSI sequence: ESC [
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+
+                // Flush accumulated text
+                if !current_text.is_empty() {
+                    spans.push(Span::styled(
+                        std::mem::take(&mut current_text),
+                        current_style,
+                    ));
+                }
+
+                // Collect parameter string until terminator
+                let mut param_str = String::new();
+                let mut valid = false;
+                for ch in chars.by_ref() {
+                    if ch == 'm' {
+                        valid = true;
+                        break;
+                    }
+                    // Non-SGR CSI sequence (e.g., cursor movement) — collect until
+                    // we hit any letter terminator and discard
+                    if ch.is_ascii_alphabetic() {
+                        break;
+                    }
+                    param_str.push(ch);
+                }
+
+                if !valid {
+                    continue; // discard non-SGR sequences
+                }
+
+                // Parse SGR parameters
+                let params: Vec<u16> = if param_str.is_empty() {
+                    vec![0] // bare ESC[m is equivalent to ESC[0m (reset)
+                } else {
+                    param_str
+                        .split(';')
+                        .filter_map(|p| p.parse::<u16>().ok())
+                        .collect()
+                };
+
+                let mut i = 0;
+                while i < params.len() {
+                    match params[i] {
+                        0 => current_style = Style::default(),
+                        1 => current_style = current_style.add_modifier(Modifier::BOLD),
+                        2 => current_style = current_style.add_modifier(Modifier::DIM),
+                        3 => current_style = current_style.add_modifier(Modifier::ITALIC),
+                        4 => current_style = current_style.add_modifier(Modifier::UNDERLINED),
+                        7 => current_style = current_style.add_modifier(Modifier::REVERSED),
+                        8 => current_style = current_style.add_modifier(Modifier::HIDDEN),
+                        9 => current_style = current_style.add_modifier(Modifier::CROSSED_OUT),
+                        22 => {
+                            current_style = current_style
+                                .remove_modifier(Modifier::BOLD | Modifier::DIM)
+                        }
+                        23 => {
+                            current_style = current_style.remove_modifier(Modifier::ITALIC)
+                        }
+                        24 => {
+                            current_style = current_style.remove_modifier(Modifier::UNDERLINED)
+                        }
+                        27 => {
+                            current_style = current_style.remove_modifier(Modifier::REVERSED)
+                        }
+                        28 => {
+                            current_style = current_style.remove_modifier(Modifier::HIDDEN)
+                        }
+                        29 => {
+                            current_style =
+                                current_style.remove_modifier(Modifier::CROSSED_OUT)
+                        }
+                        // Standard foreground colors
+                        c @ 30..=37 => current_style = current_style.fg(ansi_color((c - 30) as u8)),
+                        // Extended foreground: 38;5;N or 38;2;R;G;B
+                        38 => {
+                            if i + 2 < params.len() && params[i + 1] == 5 {
+                                current_style =
+                                    current_style.fg(Color::Indexed(params[i + 2] as u8));
+                                i += 2;
+                            } else if i + 4 < params.len()
+                                && params[i + 1] == 2
+                            {
+                                current_style = current_style.fg(Color::Rgb(
+                                    params[i + 2] as u8,
+                                    params[i + 3] as u8,
+                                    params[i + 4] as u8,
+                                ));
+                                i += 4;
+                            }
+                        }
+                        39 => current_style = current_style.fg(Color::Reset),
+                        // Standard background colors
+                        c @ 40..=47 => current_style = current_style.bg(ansi_color((c - 40) as u8)),
+                        // Extended background: 48;5;N or 48;2;R;G;B
+                        48 => {
+                            if i + 2 < params.len() && params[i + 1] == 5 {
+                                current_style =
+                                    current_style.bg(Color::Indexed(params[i + 2] as u8));
+                                i += 2;
+                            } else if i + 4 < params.len()
+                                && params[i + 1] == 2
+                            {
+                                current_style = current_style.bg(Color::Rgb(
+                                    params[i + 2] as u8,
+                                    params[i + 3] as u8,
+                                    params[i + 4] as u8,
+                                ));
+                                i += 4;
+                            }
+                        }
+                        49 => current_style = current_style.bg(Color::Reset),
+                        // Bright foreground colors
+                        c @ 90..=97 => {
+                            current_style = current_style.fg(ansi_bright_color((c - 90) as u8))
+                        }
+                        // Bright background colors
+                        c @ 100..=107 => {
+                            current_style = current_style.bg(ansi_bright_color((c - 100) as u8))
+                        }
+                        _ => {} // ignore unknown codes
+                    }
+                    i += 1;
+                }
+            } else {
+                // Bare ESC not followed by '[' — include as literal
+                current_text.push(c);
+            }
+        } else {
+            current_text.push(c);
+        }
+    }
+
+    // Flush remaining text
+    if !current_text.is_empty() {
+        spans.push(Span::styled(current_text, current_style));
+    }
+
+    if spans.is_empty() {
+        Line::raw("")
+    } else {
+        Line::from(spans)
+    }
+}
+
 fn render_output_lines(output: &[String], config: &Config, inner: Rect, buf: &mut Buffer) {
     let truncate_width = config.layout.truncate_command_width as usize;
     let lines: Vec<Line> = output
         .iter()
         .map(|line| {
-            let display = if !config.layout.line_wrap && line.len() > truncate_width {
-                format!("{}…", &line[..truncate_width.saturating_sub(1)])
+            let display = if !config.layout.line_wrap && visible_width(line) > truncate_width {
+                format!(
+                    "{}…",
+                    ansi_truncate(line, truncate_width.saturating_sub(1))
+                )
             } else {
                 line.clone()
             };
-            Line::raw(display)
+            parse_ansi_line(&display)
         })
         .collect();
 
@@ -329,5 +560,116 @@ fn format_duration(d: Duration) -> String {
         let mins = secs as u64 / 60;
         let remaining = secs as u64 % 60;
         format!("{}m{}s", mins, remaining)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visible_width_plain() {
+        assert_eq!(visible_width("hello"), 5);
+        assert_eq!(visible_width(""), 0);
+    }
+
+    #[test]
+    fn visible_width_ansi() {
+        assert_eq!(visible_width("\x1b[31mhello\x1b[0m"), 5);
+        assert_eq!(visible_width("\x1b[1;34mtext\x1b[0m more"), 9);
+    }
+
+    #[test]
+    fn truncate_plain() {
+        assert_eq!(ansi_truncate("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_preserves_escapes() {
+        let s = "\x1b[31mhello\x1b[0m world";
+        let t = ansi_truncate(s, 5);
+        assert_eq!(t, "\x1b[31mhello\x1b[0m");
+    }
+
+    #[test]
+    fn parse_plain_text() {
+        let line = parse_ansi_line("hello world");
+        assert_eq!(line.spans.len(), 1);
+        assert_eq!(line.spans[0].content, "hello world");
+        assert_eq!(line.spans[0].style, Style::default());
+    }
+
+    #[test]
+    fn parse_red_text() {
+        let line = parse_ansi_line("\x1b[31mred\x1b[0m normal");
+        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans[0].content, "red");
+        assert_eq!(line.spans[0].style, Style::default().fg(Color::Red));
+        assert_eq!(line.spans[1].content, " normal");
+        assert_eq!(line.spans[1].style, Style::default());
+    }
+
+    #[test]
+    fn parse_bold_blue() {
+        let line = parse_ansi_line("\x1b[1;34mbold blue\x1b[0m");
+        assert_eq!(line.spans[0].content, "bold blue");
+        assert_eq!(
+            line.spans[0].style,
+            Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn parse_256_color() {
+        let line = parse_ansi_line("\x1b[38;5;196mcolor\x1b[0m");
+        assert_eq!(line.spans[0].content, "color");
+        assert_eq!(
+            line.spans[0].style,
+            Style::default().fg(Color::Indexed(196))
+        );
+    }
+
+    #[test]
+    fn parse_rgb_color() {
+        let line = parse_ansi_line("\x1b[38;2;255;128;0mrgb\x1b[0m");
+        assert_eq!(line.spans[0].content, "rgb");
+        assert_eq!(
+            line.spans[0].style,
+            Style::default().fg(Color::Rgb(255, 128, 0))
+        );
+    }
+
+    #[test]
+    fn parse_bright_colors() {
+        let line = parse_ansi_line("\x1b[91mbright red\x1b[0m");
+        assert_eq!(line.spans[0].content, "bright red");
+        assert_eq!(
+            line.spans[0].style,
+            Style::default().fg(Color::LightRed)
+        );
+    }
+
+    #[test]
+    fn parse_background() {
+        let line = parse_ansi_line("\x1b[41mred bg\x1b[0m");
+        assert_eq!(line.spans[0].content, "red bg");
+        assert_eq!(line.spans[0].style, Style::default().bg(Color::Red));
+    }
+
+    #[test]
+    fn parse_bare_reset() {
+        // ESC[m with no params is equivalent to ESC[0m
+        let line = parse_ansi_line("\x1b[31mred\x1b[m normal");
+        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans[1].style, Style::default());
+    }
+
+    #[test]
+    fn parse_empty() {
+        let line = parse_ansi_line("");
+        // Empty input produces Line::raw("") which has 0 spans
+        assert_eq!(line.spans.len(), 0);
     }
 }
