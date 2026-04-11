@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod builtins;
+pub mod expand;
 pub mod help_parser;
 pub mod parser;
 pub mod path_resolver;

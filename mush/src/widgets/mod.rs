@@ -467,6 +467,27 @@ impl App {
             return;
         }
 
+        // Expand variables ($VAR, ${VAR}, $?)
+        let env = shell::expand::ShellEnv {
+            last_exit_code: self.last_exit_code,
+        };
+        let command_line = match shell::expand::expand(&command_line, &env) {
+            Ok(cl) => cl,
+            Err(e) => {
+                self.history.add_entry(CommandEntry {
+                    command: command_display,
+                    output: vec![format!("{e}")],
+                    duration: Duration::ZERO,
+                    exit_code: 1,
+                });
+                self.last_exit_code = 1;
+                self.input.valid_command = true;
+                self.input.update_cwd();
+                self.history.scroll_to_bottom();
+                return;
+            }
+        };
+
         // Execute each chain in the command line (separated by ;)
         for chain in &command_line.chains {
             self.execute_chain(chain, &command_display, &cwd);
