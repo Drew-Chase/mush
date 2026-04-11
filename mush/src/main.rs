@@ -5,7 +5,6 @@ mod widgets;
 
 use crate::config::Config;
 use crate::widgets::App;
-use std::env::set_current_dir;
 use std::path::PathBuf;
 
 
