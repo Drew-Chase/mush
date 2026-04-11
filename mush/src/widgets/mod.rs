@@ -1,4 +1,7 @@
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
+};
+use ratatui::crossterm::{execute, event::{EnableMouseCapture, DisableMouseCapture}};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::HashMap;
@@ -11,11 +14,13 @@ use std::time::{Duration, Instant};
 pub mod autocomplete;
 pub mod command_history;
 pub mod command_input;
+pub mod history_navigator;
 pub mod history_popover;
 
 use autocomplete::Autocomplete;
 use command_history::{CommandEntry, CommandHistory, LiveOutputBuffer, LiveRenderData};
 use command_input::CommandInput;
+use history_navigator::HistoryNavigator;
 use history_popover::HistoryPopover;
 
 use crate::config::Config;
@@ -59,6 +64,7 @@ pub struct App {
     pub input: CommandInput,
     pub autocomplete: Autocomplete,
     pub history_popover: HistoryPopover,
+    pub history_nav: HistoryNavigator,
     pub db: HistoryDb,
     exit: bool,
     last_history_area: Rect,
@@ -167,6 +173,7 @@ impl App {
             input: CommandInput::default(),
             autocomplete: Autocomplete::default(),
             history_popover: HistoryPopover::default(),
+            history_nav: HistoryNavigator::default(),
             db,
             exit: false,
             last_history_area: Rect::default(),
@@ -183,6 +190,7 @@ impl App {
     }
 
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
+        execute!(std::io::stdout(), EnableMouseCapture)?;
         self.history.scroll_to_bottom();
 
         while !self.exit {
@@ -217,6 +225,7 @@ impl App {
             }
         }
 
+        execute!(std::io::stdout(), DisableMouseCapture)?;
         Ok(())
     }
 
@@ -263,145 +272,163 @@ impl App {
     }
 
     fn handle_events(&mut self) -> color_eyre::Result<()> {
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                return Ok(());
-            }
+        match event::read()? {
+            Event::Key(key) => {
+                if key.kind != KeyEventKind::Press {
+                    return Ok(());
+                }
 
-            if self.running_command.is_some() {
+                if self.running_command.is_some() {
+                    match (key.modifiers, key.code) {
+                        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+                            self.kill_running_command();
+                        }
+                        (_, KeyCode::PageUp)
+                        | (KeyModifiers::SHIFT, KeyCode::Up)
+                        | (KeyModifiers::CONTROL, KeyCode::Up) => {
+                            self.history_scroll_up();
+                        }
+                        (_, KeyCode::PageDown)
+                        | (KeyModifiers::SHIFT, KeyCode::Down)
+                        | (KeyModifiers::CONTROL, KeyCode::Down) => {
+                            self.history_scroll_down();
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
                 match (key.modifiers, key.code) {
+                    // Quit
+                    (KeyModifiers::CONTROL, KeyCode::Char('q')) => {
+                        self.exit = true;
+                    }
+
+                    // Ctrl+C clears input
                     (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                        self.kill_running_command();
-                    }
-                    (_, KeyCode::PageUp) | (KeyModifiers::SHIFT, KeyCode::Up) => {
-                        self.history_scroll_up();
-                    }
-                    (_, KeyCode::PageDown) | (KeyModifiers::SHIFT, KeyCode::Down) => {
-                        self.history_scroll_down();
-                    }
-                    _ => {}
-                }
-                return Ok(());
-            }
-
-            match (key.modifiers, key.code) {
-                // Quit
-                (KeyModifiers::CONTROL, KeyCode::Char('q')) => {
-                    self.exit = true;
-                }
-
-                // Ctrl+C clears input
-                (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                    self.input.clear();
-                    self.autocomplete.close();
-                    self.history_popover.close();
-                    self.validate_input();
-                }
-
-                // Ctrl+R toggles history popover
-                (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-                    if self.history_popover.visible {
-                        self.history_popover.close();
-                    } else {
+                        self.input.clear();
                         self.autocomplete.close();
-                        self.history_popover.open(&self.db);
+                        self.history_popover.close();
+                        self.history_nav.reset();
+                        self.validate_input();
                     }
-                }
 
-                // --- History popover active ---
-                (_, KeyCode::Esc) if self.history_popover.visible => {
-                    self.history_popover.close();
-                }
-                (KeyModifiers::NONE, KeyCode::Up) if self.history_popover.visible => {
-                    self.history_popover.select_up();
-                }
-                (KeyModifiers::NONE, KeyCode::Down) if self.history_popover.visible => {
-                    self.history_popover.select_down();
-                }
-                (_, KeyCode::Enter) if self.history_popover.visible => {
-                    if let Some(cmd) = self.history_popover.accept() {
-                        self.input.buffer = cmd;
-                        self.input.cursor = self.input.buffer.len();
-                        self.validate_input();
+                    // Ctrl+R toggles history popover
+                    (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
+                        if self.history_popover.visible {
+                            self.history_popover.close();
+                        } else {
+                            self.autocomplete.close();
+                            self.history_popover.open(&self.db);
+                        }
                     }
-                }
-                (_, KeyCode::Tab) if self.history_popover.visible => {
-                    if let Some(cmd) = self.history_popover.accept() {
-                        self.input.buffer = cmd;
-                        self.input.cursor = self.input.buffer.len();
-                        self.validate_input();
-                    }
-                }
-                (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c))
-                    if self.history_popover.visible && c >= ' ' =>
-                {
-                    self.history_popover.insert_char(c);
-                }
-                (_, KeyCode::Backspace) if self.history_popover.visible => {
-                    self.history_popover.backspace();
-                }
 
-                // --- Autocomplete active ---
-                (_, KeyCode::Esc) => {
-                    self.autocomplete.close();
-                }
-                (_, KeyCode::Tab) => {
-                    if let Some(accepted) = self.autocomplete.accept() {
-                        self.input.buffer = accepted;
-                        self.input.cursor = self.input.buffer.len();
-                        self.validate_input();
+                    // --- History popover active ---
+                    (_, KeyCode::Esc) if self.history_popover.visible => {
+                        self.history_popover.close();
+                    }
+                    (KeyModifiers::NONE, KeyCode::Up) if self.history_popover.visible => {
+                        self.history_popover.select_up();
+                    }
+                    (KeyModifiers::NONE, KeyCode::Down) if self.history_popover.visible => {
+                        self.history_popover.select_down();
+                    }
+                    (_, KeyCode::Enter) if self.history_popover.visible => {
+                        if let Some(cmd) = self.history_popover.accept() {
+                            self.input.buffer = cmd;
+                            self.input.cursor = self.input.buffer.len();
+                            self.validate_input();
+                        }
+                    }
+                    (_, KeyCode::Tab) if self.history_popover.visible => {
+                        if let Some(cmd) = self.history_popover.accept() {
+                            self.input.buffer = cmd;
+                            self.input.cursor = self.input.buffer.len();
+                            self.validate_input();
+                        }
+                    }
+                    (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c))
+                        if self.history_popover.visible && c >= ' ' =>
+                    {
+                        self.history_popover.insert_char(c);
+                    }
+                    (_, KeyCode::Backspace) if self.history_popover.visible => {
+                        self.history_popover.backspace();
+                    }
+
+                    // --- Autocomplete active ---
+                    (_, KeyCode::Esc) => {
+                        self.autocomplete.close();
+                    }
+                    (_, KeyCode::Tab) => {
+                        if let Some(accepted) = self.autocomplete.accept() {
+                            self.input.buffer = accepted;
+                            self.input.cursor = self.input.buffer.len();
+                            self.validate_input();
+                            self.on_input_changed();
+                        }
+                    }
+                    (KeyModifiers::NONE, KeyCode::Up) if self.autocomplete.visible => {
+                        self.autocomplete.select_up();
+                    }
+                    (KeyModifiers::NONE, KeyCode::Down) if self.autocomplete.visible => {
+                        self.autocomplete.select_down();
+                    }
+
+                    // Submit command
+                    (_, KeyCode::Enter) => {
+                        self.autocomplete.close();
+                        self.execute_command();
+                    }
+
+                    // Text editing
+                    (_, KeyCode::Backspace) => {
+                        self.input.backspace();
                         self.on_input_changed();
                     }
-                }
-                (KeyModifiers::NONE, KeyCode::Up) if self.autocomplete.visible => {
-                    self.autocomplete.select_up();
-                }
-                (KeyModifiers::NONE, KeyCode::Down) if self.autocomplete.visible => {
-                    self.autocomplete.select_down();
-                }
+                    (_, KeyCode::Delete) => {
+                        self.input.delete();
+                        self.on_input_changed();
+                    }
+                    (_, KeyCode::Left) => self.input.move_left(),
+                    (_, KeyCode::Right) => self.input.move_right(),
+                    (_, KeyCode::Home) => self.input.home(),
+                    (_, KeyCode::End) => self.input.end(),
 
-                // Submit command
-                (_, KeyCode::Enter) => {
-                    self.autocomplete.close();
-                    self.execute_command();
-                }
+                    // Character input
+                    (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) if c >= ' ' => {
+                        self.input.insert_char(c);
+                        self.on_input_changed();
+                    }
 
-                // Text editing
-                (_, KeyCode::Backspace) => {
-                    self.input.backspace();
-                    self.on_input_changed();
-                }
-                (_, KeyCode::Delete) => {
-                    self.input.delete();
-                    self.on_input_changed();
-                }
-                (_, KeyCode::Left) => self.input.move_left(),
-                (_, KeyCode::Right) => self.input.move_right(),
-                (_, KeyCode::Home) => self.input.home(),
-                (_, KeyCode::End) => self.input.end(),
+                    // Arrow-key command history navigation
+                    (KeyModifiers::NONE, KeyCode::Up) => self.history_nav_up(),
+                    (KeyModifiers::NONE, KeyCode::Down) => self.history_nav_down(),
 
-                // Character input
-                (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) if c >= ' ' => {
-                    self.input.insert_char(c);
-                    self.on_input_changed();
+                    // Scroll output area
+                    (KeyModifiers::CONTROL, KeyCode::Up) => self.history_scroll_up(),
+                    (KeyModifiers::CONTROL, KeyCode::Down) => self.history_scroll_down(),
+                    (_, KeyCode::PageUp) => self.history_scroll_up(),
+                    (_, KeyCode::PageDown) => self.history_scroll_down(),
+                    (KeyModifiers::SHIFT, KeyCode::Up) => self.history_scroll_up(),
+                    (KeyModifiers::SHIFT, KeyCode::Down) => self.history_scroll_down(),
+
+                    _ => {}
                 }
-
-                // Scroll history
-                (KeyModifiers::NONE, KeyCode::Up) => self.history_scroll_up(),
-                (KeyModifiers::NONE, KeyCode::Down) => self.history_scroll_down(),
-                (_, KeyCode::PageUp) => self.history_scroll_up(),
-                (_, KeyCode::PageDown) => self.history_scroll_down(),
-                (KeyModifiers::SHIFT, KeyCode::Up) => self.history_scroll_up(),
-                (KeyModifiers::SHIFT, KeyCode::Down) => self.history_scroll_down(),
-
-                _ => {}
             }
+            Event::Mouse(mouse) => match mouse.kind {
+                MouseEventKind::ScrollUp => self.history_scroll_up(),
+                MouseEventKind::ScrollDown => self.history_scroll_down(),
+                _ => {}
+            },
+            _ => {}
         }
 
         Ok(())
     }
 
     fn execute_command(&mut self) {
+        self.history_nav.invalidate();
         let raw_input = self.input.take_buffer();
         let trimmed = raw_input.trim();
         if trimmed.is_empty() {
@@ -1199,6 +1226,31 @@ impl App {
 
     fn validate_input(&mut self) {
         self.input.valid_command = shell::is_valid_command(&self.input.buffer);
+    }
+
+    fn history_nav_up(&mut self) {
+        if let Some(cmd) = self.history_nav.navigate_up(&self.db, &self.input.buffer) {
+            self.input.buffer = cmd;
+            self.input.cursor = self.input.buffer.len();
+            self.validate_input();
+        }
+    }
+
+    fn history_nav_down(&mut self) {
+        use history_navigator::NavigateResult;
+        match self.history_nav.navigate_down() {
+            NavigateResult::Entry(cmd) => {
+                self.input.buffer = cmd;
+                self.input.cursor = self.input.buffer.len();
+                self.validate_input();
+            }
+            NavigateResult::Original(saved) => {
+                self.input.buffer = saved;
+                self.input.cursor = self.input.buffer.len();
+                self.validate_input();
+            }
+            NavigateResult::AtBottom => {}
+        }
     }
 
     fn history_scroll_up(&mut self) {

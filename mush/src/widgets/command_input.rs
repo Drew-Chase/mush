@@ -121,10 +121,10 @@ impl Widget for &CommandInput {
             Span::styled(" Enter ", Style::default().fg(Color::DarkGray)),
             Span::styled("Send", Style::default().fg(Color::DarkGray)),
             Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Ctrl+R ", Style::default().fg(Color::DarkGray)),
+            Span::styled("\u{2191}/\u{2193} ", Style::default().fg(Color::DarkGray)),
             Span::styled("History", Style::default().fg(Color::DarkGray)),
             Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled("PgUp/PgDn ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Ctrl+\u{2191}/\u{2193} ", Style::default().fg(Color::DarkGray)),
             Span::styled("Scroll", Style::default().fg(Color::DarkGray)),
             Span::raw(" "),
         ]).alignment(ratatui::layout::Alignment::Right);
