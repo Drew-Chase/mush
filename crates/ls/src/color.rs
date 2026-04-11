@@ -39,10 +39,40 @@ impl ColorScheme {
             FileType::Socket => "1;35",
             FileType::BlockDevice | FileType::CharDevice => "1;33;40",
             FileType::Regular if entry.permissions.executable => "1;32",
+            FileType::Regular => match extension_color(&entry.name) {
+                Some(code) => code,
+                None => return name.to_string(),
+            },
             _ => return name.to_string(),
         };
 
         format!("\x1b[{code}m{name}\x1b[0m")
+    }
+}
+
+/// Returns an ANSI color code for a file based on its extension, or `None` if
+/// the extension is not recognized. Follows Linux's default LS_COLORS conventions.
+fn extension_color(name: &str) -> Option<&'static str> {
+    let ext = name.rsplit('.').next()?;
+    let ext_lower: String = ext.to_lowercase();
+    match ext_lower.as_str() {
+        // Archives — bold red
+        "tar" | "gz" | "tgz" | "zip" | "7z" | "rar" | "bz2" | "xz" | "zst" | "lz" | "lzma"
+        | "deb" | "rpm" | "jar" | "war" | "cab" | "iso" | "msi" => Some("1;31"),
+        // Images — bold magenta
+        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "ico" | "webp" | "tiff" | "tif"
+        | "psd" | "xcf" | "raw" | "cr2" | "nef" | "heic" | "avif" => Some("1;35"),
+        // Video — bold magenta
+        "mp4" | "avi" | "mkv" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpg" | "mpeg"
+        | "ts" => Some("1;35"),
+        // Audio — cyan
+        "mp3" | "wav" | "flac" | "ogg" | "aac" | "wma" | "m4a" | "opus" | "mid" | "midi" => {
+            Some("0;36")
+        }
+        // Documents — yellow
+        "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "odt" | "ods" | "odp"
+        | "rtf" | "epub" | "csv" => Some("0;33"),
+        _ => None,
     }
 }
 

@@ -354,10 +354,9 @@ impl ResolvedConfig {
         };
 
         let mut color_mode = match cli.color {
-            Some(ColorWhenArg::Always) => ColorMode::Always,
+            Some(ColorWhenArg::Always) | None => ColorMode::Always,
             Some(ColorWhenArg::Auto) => ColorMode::Auto,
             Some(ColorWhenArg::Never) => ColorMode::Never,
-            None => ColorMode::Auto,
         };
 
         let classify = if cli.classify {

@@ -2,10 +2,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Aliases {
     #[serde(flatten)]
     pub entries: HashMap<String, String>,
+}
+
+impl Default for Aliases {
+    fn default() -> Self {
+        let mut entries = HashMap::new();
+        entries.insert("ll".to_string(), "ls -la --color".to_string());
+        Self { entries }
+    }
 }
 
 impl Aliases {

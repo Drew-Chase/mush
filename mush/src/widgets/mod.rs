@@ -491,12 +491,13 @@ impl App {
                 Some(self.run_interactive(path, args))
             }
             shell::CommandKind::External(path) => {
-                match std::process::Command::new(&path)
-                    .args(args)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                {
+                let mut cmd = std::process::Command::new(&path);
+                force_color_env(
+                    cmd.args(args)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped()),
+                );
+                match cmd.spawn() {
                     Ok(child) => {
                         self.spawn_streaming(command_display, child);
                         None
@@ -526,15 +527,16 @@ impl App {
                         });
                     }
                 };
-                match std::process::Command::new(&bun_path)
-                    .arg("run")
-                    .arg(&entry.entry_point)
-                    .args(args)
-                    .current_dir(&entry.script_dir)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                {
+                let mut cmd = std::process::Command::new(&bun_path);
+                force_color_env(
+                    cmd.arg("run")
+                        .arg(&entry.entry_point)
+                        .args(args)
+                        .current_dir(&entry.script_dir)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped()),
+                );
+                match cmd.spawn() {
                     Ok(child) => {
                         self.spawn_streaming(command_display, child);
                         None
@@ -567,7 +569,9 @@ impl App {
                 }
             }
             shell::CommandKind::External(path) => {
-                match std::process::Command::new(&path).args(args).output() {
+                let mut cmd = std::process::Command::new(&path);
+                force_color_env(cmd.args(args));
+                match cmd.output() {
                     Ok(out) => {
                         let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
                             .lines()
@@ -626,13 +630,14 @@ impl App {
                         };
                     }
                 };
-                match std::process::Command::new(&bun_path)
-                    .arg("run")
-                    .arg(&entry.entry_point)
-                    .args(args)
-                    .current_dir(&entry.script_dir)
-                    .output()
-                {
+                let mut cmd = std::process::Command::new(&bun_path);
+                force_color_env(
+                    cmd.arg("run")
+                        .arg(&entry.entry_point)
+                        .args(args)
+                        .current_dir(&entry.script_dir),
+                );
+                match cmd.output() {
                     Ok(out) => {
                         let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
                             .lines()
@@ -1213,4 +1218,13 @@ fn compute_help_hash(text: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+/// Configures a Command to produce colored output even when stdout is piped.
+/// Mush captures subprocess output through pipes and renders it via an ANSI parser,
+/// so it is always safe to receive ANSI escape codes from child processes.
+fn force_color_env(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    cmd.env("FORCE_COLOR", "1")
+        .env("CLICOLOR_FORCE", "1")
+        .env("CARGO_TERM_COLOR", "always")
 }
