@@ -4,7 +4,6 @@
 ///   CommandLine -> Chain+ -> Pipeline+ -> SimpleCommand+
 ///
 /// A `CommandLine` is the top-level unit representing one line of user input.
-
 /// A complete parsed command line (one line of user input).
 #[derive(Debug, Clone)]
 pub struct CommandLine {

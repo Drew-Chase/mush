@@ -4,6 +4,7 @@ use std::iter::Peekable;
 use std::str::Chars;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ParseError {
     UnexpectedToken(String),
     UnexpectedEof,
@@ -174,7 +175,7 @@ impl<'a> Lexer<'a> {
             match self.chars.peek() {
                 None => break,
                 Some(&c) if c.is_whitespace() => break,
-                Some(&c) if matches!(c, '|' | ';' | '<') => break,
+                Some(&('|' | ';' | '<')) => break,
                 Some(&'>') => {
                     // Check if this is a redirect operator, not part of the word
                     break;

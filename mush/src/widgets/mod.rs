@@ -31,7 +31,6 @@ use crate::shell::help_parser::{self, CommandOption};
 struct ExecResult {
     output: Vec<String>,
     exit_code: i32,
-    exit_app: bool,
 }
 
 enum OutputChunk {
@@ -39,11 +38,13 @@ enum OutputChunk {
     Error(String),
 }
 
-struct RunningCommand {
+struct RunningPipeline {
     command: String,
     buffer: LiveOutputBuffer,
     rx: Receiver<OutputChunk>,
-    child: Child,
+    /// All child processes in the pipeline (for cleanup). The last child is separate.
+    pipeline_children: Vec<Child>,
+    last_child: Child,
     start: Instant,
 }
 
@@ -68,7 +69,8 @@ pub struct App {
     pub db: HistoryDb,
     exit: bool,
     last_history_area: Rect,
-    running_command: Option<RunningCommand>,
+    running_pipeline: Option<RunningPipeline>,
+    last_exit_code: i32,
     needs_clear: bool,
     help_cache: HashMap<String, Vec<CommandOption>>,
     pending_help_lookups: Vec<PendingHelpLookup>,
@@ -81,9 +83,13 @@ pub struct App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        if let Some(mut running) = self.running_command.take() {
-            let _ = running.child.kill();
-            let _ = running.child.wait();
+        if let Some(mut running) = self.running_pipeline.take() {
+            for mut c in running.pipeline_children.drain(..) {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            let _ = running.last_child.kill();
+            let _ = running.last_child.wait();
         }
     }
 }
@@ -177,7 +183,8 @@ impl App {
             db,
             exit: false,
             last_history_area: Rect::default(),
-            running_command: None,
+            running_pipeline: None,
+            last_exit_code: 0,
             needs_clear: false,
             help_cache,
             pending_help_lookups: Vec::new(),
@@ -199,7 +206,7 @@ impl App {
                 self.needs_clear = false;
             }
 
-            if self.running_command.is_some() {
+            if self.running_pipeline.is_some() {
                 self.drain_running_output();
             }
 
@@ -213,7 +220,7 @@ impl App {
 
             terminal.draw(|frame| self.draw(frame))?;
 
-            let needs_poll = self.running_command.is_some()
+            let needs_poll = self.running_pipeline.is_some()
                 || !self.pending_help_lookups.is_empty()
                 || self.pending_path_scan.is_some();
             if needs_poll {
@@ -232,7 +239,7 @@ impl App {
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
 
-        self.history.live_entry = self.running_command.as_ref().map(|r| LiveRenderData {
+        self.history.live_entry = self.running_pipeline.as_ref().map(|r| LiveRenderData {
             command: r.command.clone(),
             lines: r.buffer.all_lines().iter().map(|s| s.to_string()).collect(),
             elapsed: r.start.elapsed(),
@@ -278,7 +285,7 @@ impl App {
                     return Ok(());
                 }
 
-                if self.running_command.is_some() {
+                if self.running_pipeline.is_some() {
                     match (key.modifiers, key.code) {
                         (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                             self.kill_running_command();
@@ -437,58 +444,34 @@ impl App {
 
         let command_display = trimmed.to_string();
         let cwd = self.input.cwd.clone();
-        let start = Instant::now();
 
-        match shell::resolve_command(trimmed) {
-            shell::CommandKind::Builtin(shell::builtins::BuiltinCommand::Clear) => {
-                self.history.entries.clear();
+        // Parse the command line into an AST
+        let command_line = match shell::parser::parse(trimmed) {
+            Ok(cl) => cl,
+            Err(e) => {
+                self.history.add_entry(CommandEntry {
+                    command: command_display,
+                    output: vec![format!("parse error: {e}")],
+                    duration: Duration::ZERO,
+                    exit_code: 1,
+                });
+                self.last_exit_code = 1;
+                self.input.valid_command = true;
+                self.input.update_cwd();
                 self.history.scroll_to_bottom();
+                return;
             }
-            shell::CommandKind::Alias(commands) => {
-                let mut all_output: Vec<String> = Vec::new();
-                for cmd in &commands {
-                    let result = self.execute_single(cmd);
-                    all_output.extend(result.output);
-                    if result.exit_app {
-                        self.exit = true;
-                        break;
-                    }
-                }
-                let duration = start.elapsed();
-                if !all_output.is_empty() || !commands.is_empty() {
-                    let _ = self.db.insert(
-                        &command_display,
-                        0,
-                        duration.as_millis() as i64,
-                        Some(&cwd),
-                    );
-                    self.history.add_entry(CommandEntry {
-                        command: command_display,
-                        output: all_output,
-                        duration,
-                        exit_code: 0,
-                    });
-                }
-            }
-            other => {
-                if let Some(result) = self.dispatch_resolved(other, &command_display, trimmed) {
-                    let duration = start.elapsed();
-                    let _ = self.db.insert(
-                        &command_display,
-                        result.exit_code,
-                        duration.as_millis() as i64,
-                        Some(&cwd),
-                    );
-                    self.history.add_entry(CommandEntry {
-                        command: command_display,
-                        output: result.output,
-                        duration,
-                        exit_code: result.exit_code,
-                    });
-                    if result.exit_app {
-                        self.exit = true;
-                    }
-                }
+        };
+
+        if command_line.chains.is_empty() {
+            return;
+        }
+
+        // Execute each chain in the command line (separated by ;)
+        for chain in &command_line.chains {
+            self.execute_chain(chain, &command_display, &cwd);
+            if self.exit {
+                break;
             }
         }
 
@@ -497,212 +480,161 @@ impl App {
         self.history.scroll_to_bottom();
     }
 
-    fn execute_single(&mut self, input: &str) -> ExecResult {
-        let resolved = shell::resolve_command(input);
-        self.dispatch_resolved_sync(resolved, input)
-    }
-
-    fn dispatch_resolved(
+    fn execute_chain(
         &mut self,
-        kind: shell::CommandKind,
+        chain: &shell::ast::Chain,
         command_display: &str,
-        input: &str,
-    ) -> Option<ExecResult> {
-        let parts = shell::tokenize(input);
-        let args = if parts.len() > 1 { &parts[1..] } else { &[] as &[String] };
+        cwd: &str,
+    ) {
+        self.execute_pipeline_in_chain(&chain.first, command_display, cwd);
 
-        match kind {
-            shell::CommandKind::External(ref path)
-                if !parts.is_empty() && shell::is_interactive(&parts[0], args) =>
-            {
-                Some(self.run_interactive(path, args))
+        for (op, pipeline) in &chain.rest {
+            // If there's a streaming command running, we can't chain yet.
+            // For && and || chaining, pipelines must complete synchronously.
+            // If the previous pipeline was streaming, wait for it.
+            if self.running_pipeline.is_some() {
+                self.wait_for_running_pipeline();
             }
-            shell::CommandKind::External(path) => {
-                let mut cmd = std::process::Command::new(&path);
-                force_color_env(
-                    cmd.args(args)
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped()),
-                );
-                match cmd.spawn() {
-                    Ok(child) => {
-                        self.spawn_streaming(command_display, child);
-                        None
-                    }
-                    Err(e) => Some(ExecResult {
-                        output: vec![format!("error: {e}")],
-                        exit_code: -1,
-                        exit_app: false,
-                    }),
-                }
+
+            let should_run = match op {
+                shell::ast::ChainOp::And => self.last_exit_code == 0,
+                shell::ast::ChainOp::Or => self.last_exit_code != 0,
+            };
+            if should_run {
+                self.execute_pipeline_in_chain(pipeline, command_display, cwd);
             }
-            shell::CommandKind::Script(entry) => {
-                let bun_path = match shell::path_resolver::find_in_path("bun") {
-                    Some(p) => p,
-                    None => {
-                        return Some(ExecResult {
-                            output: vec![
-                                format!(
-                                    "error: script '{}' requires Bun but 'bun' was not found on PATH.",
-                                    entry.name
-                                ),
-                                "Install Bun from https://bun.sh or re-run the Mush installer with the Bun option."
-                                    .to_string(),
-                            ],
-                            exit_code: 1,
-                            exit_app: false,
-                        });
-                    }
-                };
-                let mut cmd = std::process::Command::new(&bun_path);
-                force_color_env(
-                    cmd.arg("run")
-                        .arg(&entry.entry_point)
-                        .args(args)
-                        .current_dir(&entry.script_dir)
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped()),
-                );
-                match cmd.spawn() {
-                    Ok(child) => {
-                        self.spawn_streaming(command_display, child);
-                        None
-                    }
-                    Err(e) => Some(ExecResult {
-                        output: vec![format!("error: {e}")],
-                        exit_code: -1,
-                        exit_app: false,
-                    }),
-                }
-            }
-            other => Some(self.dispatch_resolved_sync(other, input)),
         }
     }
 
-    fn dispatch_resolved_sync(&mut self, kind: shell::CommandKind, input: &str) -> ExecResult {
-        let parts = shell::tokenize(input);
-        let args = if parts.len() > 1 { &parts[1..] } else { &[] as &[String] };
+    fn execute_pipeline_in_chain(
+        &mut self,
+        pipeline: &shell::ast::Pipeline,
+        command_display: &str,
+        cwd: &str,
+    ) {
+        let start = Instant::now();
 
-        match kind {
-            shell::CommandKind::Builtin(cmd) => {
-                let result = shell::builtins::execute(cmd, args);
-                if result.change_dir.is_some() {
+        // Check for clear builtin as a special case (needs to clear history widget)
+        if pipeline.commands.len() == 1 {
+            let first_word = pipeline.commands[0]
+                .words
+                .first()
+                .map(|w| w.to_plain_string());
+            if let Some(ref name) = first_word
+                && (name == "clear" || name == "cls")
+            {
+                self.history.entries.clear();
+                self.history.scroll_to_bottom();
+                self.last_exit_code = 0;
+                return;
+            }
+        }
+
+        match shell::pipeline::execute_pipeline(pipeline) {
+            shell::pipeline::PipelineResult::Sync(result) => {
+                let duration = start.elapsed();
+                self.last_exit_code = result.exit_code;
+                let _ = self.db.insert(
+                    command_display,
+                    result.exit_code,
+                    duration.as_millis() as i64,
+                    Some(cwd),
+                );
+                if !result.output.is_empty() || result.exit_code != 0 {
+                    self.history.add_entry(CommandEntry {
+                        command: command_display.to_string(),
+                        output: result.output,
+                        duration,
+                        exit_code: result.exit_code,
+                    });
+                }
+                if result.change_dir {
                     self.input.update_cwd();
                 }
-                ExecResult {
-                    output: result.output,
-                    exit_code: 0,
-                    exit_app: result.exit_app,
+                if result.exit_app {
+                    self.exit = true;
                 }
             }
-            shell::CommandKind::External(path) => {
-                let mut cmd = std::process::Command::new(&path);
-                force_color_env(cmd.args(args));
-                match cmd.output() {
-                    Ok(out) => {
-                        let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
-                            .lines()
-                            .map(String::from)
-                            .collect();
-                        let stderr_lines: Vec<String> = String::from_utf8_lossy(&out.stderr)
-                            .lines()
-                            .map(String::from)
-                            .collect();
-                        lines.extend(stderr_lines);
-                        ExecResult {
-                            output: lines,
-                            exit_code: out.status.code().unwrap_or(-1),
-                            exit_app: false,
-                        }
-                    }
-                    Err(e) => ExecResult {
-                        output: vec![format!("error: {e}")],
-                        exit_code: -1,
-                        exit_app: false,
-                    },
-                }
+            shell::pipeline::PipelineResult::Streaming(spawn) => {
+                self.spawn_streaming_pipeline(command_display, spawn);
             }
-            shell::CommandKind::Alias(commands) => {
-                let mut all_output = Vec::new();
-                let mut exit_app = false;
-                for cmd in &commands {
-                    let result = self.execute_single(cmd);
-                    all_output.extend(result.output);
-                    if result.exit_app {
-                        exit_app = true;
-                        break;
-                    }
-                }
-                ExecResult {
-                    output: all_output,
-                    exit_code: 0,
-                    exit_app,
-                }
-            }
-            shell::CommandKind::Script(entry) => {
-                let bun_path = match shell::path_resolver::find_in_path("bun") {
-                    Some(p) => p,
-                    None => {
-                        return ExecResult {
-                            output: vec![
-                                format!(
-                                    "error: script '{}' requires Bun but 'bun' was not found on PATH.",
-                                    entry.name
-                                ),
-                                "Install Bun from https://bun.sh or re-run the Mush installer with the Bun option."
-                                    .to_string(),
-                            ],
-                            exit_code: 1,
-                            exit_app: false,
-                        };
-                    }
-                };
-                let mut cmd = std::process::Command::new(&bun_path);
-                force_color_env(
-                    cmd.arg("run")
-                        .arg(&entry.entry_point)
-                        .args(args)
-                        .current_dir(&entry.script_dir),
+            shell::pipeline::PipelineResult::Interactive { path, args } => {
+                let result = self.run_interactive(&path, &args);
+                let duration = start.elapsed();
+                self.last_exit_code = result.exit_code;
+                let _ = self.db.insert(
+                    command_display,
+                    result.exit_code,
+                    duration.as_millis() as i64,
+                    Some(cwd),
                 );
-                match cmd.output() {
-                    Ok(out) => {
-                        let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
-                            .lines()
-                            .map(String::from)
-                            .collect();
-                        let stderr_lines: Vec<String> = String::from_utf8_lossy(&out.stderr)
-                            .lines()
-                            .map(String::from)
-                            .collect();
-                        lines.extend(stderr_lines);
-                        ExecResult {
-                            output: lines,
-                            exit_code: out.status.code().unwrap_or(-1),
-                            exit_app: false,
-                        }
-                    }
-                    Err(e) => ExecResult {
-                        output: vec![format!("error: {e}")],
-                        exit_code: -1,
-                        exit_app: false,
-                    },
-                }
-            }
-            shell::CommandKind::NotFound => {
-                let name = parts.first().map(|s| s.as_str()).unwrap_or(input);
-                ExecResult {
-                    output: vec![format!("command not found: {name}")],
-                    exit_code: 127,
-                    exit_app: false,
+                if !result.output.is_empty() {
+                    self.history.add_entry(CommandEntry {
+                        command: command_display.to_string(),
+                        output: result.output,
+                        duration,
+                        exit_code: result.exit_code,
+                    });
                 }
             }
         }
     }
 
-    fn spawn_streaming(&mut self, command_display: &str, mut child: Child) {
+    /// Wait for a running streaming pipeline to complete (blocking).
+    fn wait_for_running_pipeline(&mut self) {
+        if let Some(mut running) = self.running_pipeline.take() {
+            // Drain remaining output
+            loop {
+                match running.rx.try_recv() {
+                    Ok(OutputChunk::Data(text)) => running.buffer.push(&text),
+                    Ok(OutputChunk::Error(msg)) => running.buffer.push(&format!("[error: {msg}]")),
+                    Err(TryRecvError::Empty) => {
+                        std::thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                    Err(TryRecvError::Disconnected) => break,
+                }
+            }
+
+            let exit_code = match running.last_child.wait() {
+                Ok(status) => status.code().unwrap_or(-1),
+                Err(_) => -1,
+            };
+            for mut c in running.pipeline_children {
+                let _ = c.wait();
+            }
+
+            let duration = running.start.elapsed();
+            let output = running.buffer.into_lines();
+
+            self.last_exit_code = exit_code;
+            let _ = self.db.insert(
+                &running.command,
+                exit_code,
+                duration.as_millis() as i64,
+                Some(&self.input.cwd),
+            );
+
+            self.history.add_entry(CommandEntry {
+                command: running.command,
+                output,
+                duration,
+                exit_code,
+            });
+
+            self.input.update_cwd();
+            self.history.scroll_to_bottom();
+        }
+    }
+
+    fn spawn_streaming_pipeline(
+        &mut self,
+        command_display: &str,
+        mut spawn: shell::pipeline::StreamingSpawn,
+    ) {
         let (tx, rx) = mpsc::channel::<OutputChunk>();
 
-        if let Some(stdout) = child.stdout.take() {
+        if let Some(stdout) = spawn.last_child.stdout.take() {
             let tx_out = tx.clone();
             std::thread::spawn(move || {
                 let mut reader = std::io::BufReader::new(stdout);
@@ -725,7 +657,7 @@ impl App {
             });
         }
 
-        if let Some(stderr) = child.stderr.take() {
+        if let Some(stderr) = spawn.last_child.stderr.take() {
             let tx_err = tx.clone();
             std::thread::spawn(move || {
                 let mut reader = std::io::BufReader::new(stderr);
@@ -750,11 +682,12 @@ impl App {
 
         drop(tx);
 
-        self.running_command = Some(RunningCommand {
+        self.running_pipeline = Some(RunningPipeline {
             command: command_display.to_string(),
             buffer: LiveOutputBuffer::new(),
             rx,
-            child,
+            pipeline_children: spawn.children,
+            last_child: spawn.last_child,
             start: Instant::now(),
         });
     }
@@ -776,18 +709,16 @@ impl App {
             Ok(s) => ExecResult {
                 output: Vec::new(),
                 exit_code: s.code().unwrap_or(-1),
-                exit_app: false,
             },
             Err(e) => ExecResult {
                 output: vec![format!("error: {e}")],
                 exit_code: -1,
-                exit_app: false,
             },
         }
     }
 
     fn drain_running_output(&mut self) {
-        let running = match &mut self.running_command {
+        let running = match &mut self.running_pipeline {
             Some(r) => r,
             None => return,
         };
@@ -802,22 +733,27 @@ impl App {
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
-                    self.finalize_running_command();
+                    self.finalize_running_pipeline();
                     return;
                 }
             }
         }
     }
 
-    fn finalize_running_command(&mut self) {
-        if let Some(mut running) = self.running_command.take() {
-            let exit_code = match running.child.wait() {
+    fn finalize_running_pipeline(&mut self) {
+        if let Some(mut running) = self.running_pipeline.take() {
+            let exit_code = match running.last_child.wait() {
                 Ok(status) => status.code().unwrap_or(-1),
                 Err(_) => -1,
             };
+            // Wait for all pipeline children too
+            for mut c in running.pipeline_children {
+                let _ = c.wait();
+            }
             let duration = running.start.elapsed();
             let output = running.buffer.into_lines();
 
+            self.last_exit_code = exit_code;
             let _ = self.db.insert(
                 &running.command,
                 exit_code,
@@ -838,13 +774,18 @@ impl App {
     }
 
     fn kill_running_command(&mut self) {
-        if let Some(mut running) = self.running_command.take() {
-            let _ = running.child.kill();
-            let _ = running.child.wait();
+        if let Some(mut running) = self.running_pipeline.take() {
+            for mut c in running.pipeline_children {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            let _ = running.last_child.kill();
+            let _ = running.last_child.wait();
             let duration = running.start.elapsed();
             let mut output = running.buffer.into_lines();
             output.push("^C".to_string());
 
+            self.last_exit_code = 130;
             let _ = self.db.insert(
                 &running.command,
                 130,
@@ -1335,7 +1276,7 @@ fn decode_output(bytes: Vec<u8>) -> String {
 /// Configures a Command to produce colored output even when stdout is piped.
 /// Mush captures subprocess output through pipes and renders it via an ANSI parser,
 /// so it is always safe to receive ANSI escape codes from child processes.
-fn force_color_env(cmd: &mut std::process::Command) -> &mut std::process::Command {
+pub fn force_color_env(cmd: &mut std::process::Command) -> &mut std::process::Command {
     cmd.env("FORCE_COLOR", "1")
         .env("CLICOLOR_FORCE", "1")
         .env("CARGO_TERM_COLOR", "always")

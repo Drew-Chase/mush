@@ -3,6 +3,7 @@ pub mod builtins;
 pub mod help_parser;
 pub mod parser;
 pub mod path_resolver;
+pub mod pipeline;
 pub mod script_registry;
 
 use std::path::{Path, PathBuf};

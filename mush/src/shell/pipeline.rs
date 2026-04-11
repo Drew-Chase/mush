@@ -1,0 +1,877 @@
+use super::ast::*;
+use super::{builtins, path_resolver, CommandKind};
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::process::{Child, Command, Stdio};
+
+/// The result of executing a single simple command synchronously.
+pub struct SyncExecResult {
+    pub output: Vec<String>,
+    pub exit_code: i32,
+    pub exit_app: bool,
+    pub change_dir: bool,
+}
+
+/// Information needed to spawn a streaming (async) pipeline in the TUI.
+pub struct StreamingSpawn {
+    /// All child processes in the pipeline (for cleanup).
+    pub children: Vec<Child>,
+    /// The final child whose stdout/stderr should be streamed to the TUI.
+    pub last_child: Child,
+}
+
+/// The result of attempting to execute a pipeline.
+pub enum PipelineResult {
+    /// The pipeline completed synchronously.
+    Sync(SyncExecResult),
+    /// The pipeline spawned async processes; the last child should be streamed.
+    Streaming(StreamingSpawn),
+    /// The pipeline requires interactive terminal access.
+    Interactive {
+        path: std::path::PathBuf,
+        args: Vec<String>,
+    },
+}
+
+/// Resolve a SimpleCommand's first word to a CommandKind + full args list.
+fn resolve_simple(cmd: &SimpleCommand) -> (CommandKind, Vec<String>) {
+    let words: Vec<String> = cmd.words.iter().map(|w| w.to_plain_string()).collect();
+    let name = &words[0];
+    let args = if words.len() > 1 {
+        words[1..].to_vec()
+    } else {
+        Vec::new()
+    };
+
+    let kind = super::resolve_command(name);
+    (kind, args)
+}
+
+/// Build redirect configuration for a command's I/O.
+struct RedirectConfig {
+    stdin: StdioConfig,
+    stdout: StdioConfig,
+    stderr: StdioConfig,
+    merge_stderr_to_stdout: bool,
+}
+
+#[allow(dead_code)]
+enum StdioConfig {
+    Inherit,
+    Piped,
+    FromFile(File),
+    FromStdio(Stdio),
+}
+
+impl Default for RedirectConfig {
+    fn default() -> Self {
+        Self {
+            stdin: StdioConfig::Inherit,
+            stdout: StdioConfig::Piped,
+            stderr: StdioConfig::Piped,
+            merge_stderr_to_stdout: false,
+        }
+    }
+}
+
+fn build_redirect_config(
+    redirects: &[Redirect],
+    is_piped_stdin: bool,
+) -> Result<RedirectConfig, String> {
+    let mut config = RedirectConfig::default();
+
+    if is_piped_stdin {
+        config.stdin = StdioConfig::Piped;
+    }
+
+    for redir in redirects {
+        let target_path = redir.target.to_plain_string();
+        match redir.kind {
+            RedirectKind::StdoutOverwrite => {
+                let file = File::create(&target_path)
+                    .map_err(|e| format!("redirect: {target_path}: {e}"))?;
+                config.stdout = StdioConfig::FromFile(file);
+            }
+            RedirectKind::StdoutAppend => {
+                let file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&target_path)
+                    .map_err(|e| format!("redirect: {target_path}: {e}"))?;
+                config.stdout = StdioConfig::FromFile(file);
+            }
+            RedirectKind::StdinRead => {
+                let file = File::open(&target_path)
+                    .map_err(|e| format!("redirect: {target_path}: {e}"))?;
+                config.stdin = StdioConfig::FromFile(file);
+            }
+            RedirectKind::StderrOverwrite => {
+                let file = File::create(&target_path)
+                    .map_err(|e| format!("redirect: {target_path}: {e}"))?;
+                config.stderr = StdioConfig::FromFile(file);
+            }
+            RedirectKind::StderrAppend => {
+                let file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&target_path)
+                    .map_err(|e| format!("redirect: {target_path}: {e}"))?;
+                config.stderr = StdioConfig::FromFile(file);
+            }
+            RedirectKind::StderrToStdout => {
+                config.merge_stderr_to_stdout = true;
+            }
+        }
+    }
+
+    Ok(config)
+}
+
+fn apply_stdio(cmd: &mut Command, config: RedirectConfig) {
+    match config.stdin {
+        StdioConfig::Inherit => {}
+        StdioConfig::Piped => {
+            cmd.stdin(Stdio::piped());
+        }
+        StdioConfig::FromFile(f) => {
+            cmd.stdin(Stdio::from(f));
+        }
+        StdioConfig::FromStdio(s) => {
+            cmd.stdin(s);
+        }
+    }
+
+    match config.stdout {
+        StdioConfig::Inherit => {}
+        StdioConfig::Piped => {
+            cmd.stdout(Stdio::piped());
+        }
+        StdioConfig::FromFile(f) => {
+            cmd.stdout(Stdio::from(f));
+        }
+        StdioConfig::FromStdio(s) => {
+            cmd.stdout(s);
+        }
+    }
+
+    if config.merge_stderr_to_stdout {
+        // We need stdout to be piped first to clone it for stderr.
+        // If stdout is a file, we need to duplicate the file handle.
+        cmd.stderr(Stdio::piped()); // will be merged in post-processing
+    } else {
+        match config.stderr {
+            StdioConfig::Inherit => {}
+            StdioConfig::Piped => {
+                cmd.stderr(Stdio::piped());
+            }
+            StdioConfig::FromFile(f) => {
+                cmd.stderr(Stdio::from(f));
+            }
+            StdioConfig::FromStdio(s) => {
+                cmd.stderr(s);
+            }
+        }
+    }
+}
+
+/// Execute a single-command pipeline synchronously (for builtins, or sync external).
+pub fn execute_simple_sync(cmd: &SimpleCommand) -> SyncExecResult {
+    let (kind, args) = resolve_simple(cmd);
+
+    match kind {
+        CommandKind::Builtin(builtin) => {
+            let result = builtins::execute(builtin, &args);
+            SyncExecResult {
+                output: result.output,
+                exit_code: 0,
+                exit_app: result.exit_app,
+                change_dir: result.change_dir.is_some(),
+            }
+        }
+        CommandKind::External(path) => {
+            let redir = match build_redirect_config(&cmd.redirects, false) {
+                Ok(r) => r,
+                Err(e) => {
+                    return SyncExecResult {
+                        output: vec![e],
+                        exit_code: 1,
+                        exit_app: false,
+                        change_dir: false,
+                    };
+                }
+            };
+
+            let mut proc = Command::new(&path);
+            super::super::widgets::force_color_env(proc.args(&args));
+            apply_stdio(&mut proc, redir);
+
+            match proc.output() {
+                Ok(out) => {
+                    let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                        .lines()
+                        .map(String::from)
+                        .collect();
+                    let stderr_lines: Vec<String> = String::from_utf8_lossy(&out.stderr)
+                        .lines()
+                        .map(String::from)
+                        .collect();
+                    lines.extend(stderr_lines);
+                    SyncExecResult {
+                        output: lines,
+                        exit_code: out.status.code().unwrap_or(-1),
+                        exit_app: false,
+                        change_dir: false,
+                    }
+                }
+                Err(e) => SyncExecResult {
+                    output: vec![format!("error: {e}")],
+                    exit_code: -1,
+                    exit_app: false,
+                    change_dir: false,
+                },
+            }
+        }
+        CommandKind::Script(entry) => {
+            let bun_path = match path_resolver::find_in_path("bun") {
+                Some(p) => p,
+                None => {
+                    return SyncExecResult {
+                        output: vec![
+                            format!(
+                                "error: script '{}' requires Bun but 'bun' was not found on PATH.",
+                                entry.name
+                            ),
+                            "Install Bun from https://bun.sh or re-run the Mush installer with the Bun option."
+                                .to_string(),
+                        ],
+                        exit_code: 1,
+                        exit_app: false,
+                        change_dir: false,
+                    };
+                }
+            };
+
+            let redir = match build_redirect_config(&cmd.redirects, false) {
+                Ok(r) => r,
+                Err(e) => {
+                    return SyncExecResult {
+                        output: vec![e],
+                        exit_code: 1,
+                        exit_app: false,
+                        change_dir: false,
+                    };
+                }
+            };
+
+            let mut proc = Command::new(&bun_path);
+            super::super::widgets::force_color_env(
+                proc.arg("run")
+                    .arg(&entry.entry_point)
+                    .args(&args)
+                    .current_dir(&entry.script_dir),
+            );
+            apply_stdio(&mut proc, redir);
+
+            match proc.output() {
+                Ok(out) => {
+                    let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                        .lines()
+                        .map(String::from)
+                        .collect();
+                    let stderr_lines: Vec<String> = String::from_utf8_lossy(&out.stderr)
+                        .lines()
+                        .map(String::from)
+                        .collect();
+                    lines.extend(stderr_lines);
+                    SyncExecResult {
+                        output: lines,
+                        exit_code: out.status.code().unwrap_or(-1),
+                        exit_app: false,
+                        change_dir: false,
+                    }
+                }
+                Err(e) => SyncExecResult {
+                    output: vec![format!("error: {e}")],
+                    exit_code: -1,
+                    exit_app: false,
+                    change_dir: false,
+                },
+            }
+        }
+        CommandKind::Alias(commands) => {
+            let mut all_output = Vec::new();
+            let mut exit_app = false;
+            let mut exit_code = 0;
+            for cmd_str in &commands {
+                match super::parser::parse(cmd_str) {
+                    Ok(cl) => {
+                        for chain in &cl.chains {
+                            let result = execute_chain_sync(chain);
+                            all_output.extend(result.output);
+                            exit_code = result.exit_code;
+                            if result.exit_app {
+                                exit_app = true;
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        all_output.push(format!("parse error: {e}"));
+                        exit_code = 1;
+                    }
+                }
+                if exit_app {
+                    break;
+                }
+            }
+            SyncExecResult {
+                output: all_output,
+                exit_code,
+                exit_app,
+                change_dir: false,
+            }
+        }
+        CommandKind::NotFound => {
+            let name = cmd.words.first().map(|w| w.to_plain_string()).unwrap_or_default();
+            SyncExecResult {
+                output: vec![format!("command not found: {name}")],
+                exit_code: 127,
+                exit_app: false,
+                change_dir: false,
+            }
+        }
+    }
+}
+
+/// Execute a chain synchronously (for use in alias expansion, etc.).
+pub fn execute_chain_sync(chain: &Chain) -> SyncExecResult {
+    let mut result = execute_pipeline_sync(&chain.first);
+
+    for (op, pipeline) in &chain.rest {
+        let should_run = match op {
+            ChainOp::And => result.exit_code == 0,
+            ChainOp::Or => result.exit_code != 0,
+        };
+        if should_run {
+            result = execute_pipeline_sync(pipeline);
+        }
+    }
+
+    result
+}
+
+/// Execute a pipeline synchronously.
+fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
+    if pipeline.commands.len() == 1 {
+        return execute_simple_sync(&pipeline.commands[0]);
+    }
+
+    // Multi-command pipeline: wire stdout -> stdin between processes
+    let mut prev_stdout: Option<Vec<u8>> = None;
+    let mut last_result = SyncExecResult {
+        output: Vec::new(),
+        exit_code: 0,
+        exit_app: false,
+        change_dir: false,
+    };
+
+    for (i, cmd) in pipeline.commands.iter().enumerate() {
+        let (kind, args) = resolve_simple(cmd);
+        let is_last = i == pipeline.commands.len() - 1;
+
+        match kind {
+            CommandKind::Builtin(builtin) => {
+                // Builtins: execute sync, capture output as bytes for piping
+                let result = builtins::execute(builtin, &args);
+                let output_bytes = result.output.join("\n").into_bytes();
+                if is_last {
+                    last_result = SyncExecResult {
+                        output: result.output,
+                        exit_code: 0,
+                        exit_app: result.exit_app,
+                        change_dir: result.change_dir.is_some(),
+                    };
+                } else {
+                    prev_stdout = Some(output_bytes);
+                }
+            }
+            CommandKind::External(path) => {
+                let mut proc = Command::new(&path);
+                super::super::widgets::force_color_env(proc.args(&args));
+
+                if prev_stdout.is_some() {
+                    proc.stdin(Stdio::piped());
+                }
+                proc.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+                // Apply file redirects
+                apply_redirects_to_command(&mut proc, &cmd.redirects);
+
+                match proc.spawn() {
+                    Ok(mut child) => {
+                        if let Some(input_data) = prev_stdout.take()
+                            && let Some(mut stdin) = child.stdin.take()
+                        {
+                            let _ = stdin.write_all(&input_data);
+                        }
+
+                        match child.wait_with_output() {
+                            Ok(out) => {
+                                if is_last {
+                                    let mut lines: Vec<String> =
+                                        String::from_utf8_lossy(&out.stdout)
+                                            .lines()
+                                            .map(String::from)
+                                            .collect();
+                                    let stderr: Vec<String> =
+                                        String::from_utf8_lossy(&out.stderr)
+                                            .lines()
+                                            .map(String::from)
+                                            .collect();
+                                    lines.extend(stderr);
+                                    last_result = SyncExecResult {
+                                        output: lines,
+                                        exit_code: out.status.code().unwrap_or(-1),
+                                        exit_app: false,
+                                        change_dir: false,
+                                    };
+                                } else {
+                                    prev_stdout = Some(out.stdout);
+                                    last_result.exit_code = out.status.code().unwrap_or(-1);
+                                }
+                            }
+                            Err(e) => {
+                                return SyncExecResult {
+                                    output: vec![format!("error: {e}")],
+                                    exit_code: -1,
+                                    exit_app: false,
+                                    change_dir: false,
+                                };
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        return SyncExecResult {
+                            output: vec![format!("error: {e}")],
+                            exit_code: -1,
+                            exit_app: false,
+                            change_dir: false,
+                        };
+                    }
+                }
+            }
+            CommandKind::Script(entry) => {
+                let bun_path = match path_resolver::find_in_path("bun") {
+                    Some(p) => p,
+                    None => {
+                        return SyncExecResult {
+                            output: vec![format!(
+                                "error: script '{}' requires Bun",
+                                entry.name
+                            )],
+                            exit_code: 1,
+                            exit_app: false,
+                            change_dir: false,
+                        };
+                    }
+                };
+
+                let mut proc = Command::new(&bun_path);
+                super::super::widgets::force_color_env(
+                    proc.arg("run")
+                        .arg(&entry.entry_point)
+                        .args(&args)
+                        .current_dir(&entry.script_dir),
+                );
+
+                if prev_stdout.is_some() {
+                    proc.stdin(Stdio::piped());
+                }
+                proc.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+                match proc.spawn() {
+                    Ok(mut child) => {
+                        if let Some(input_data) = prev_stdout.take()
+                            && let Some(mut stdin) = child.stdin.take()
+                        {
+                            let _ = stdin.write_all(&input_data);
+                        }
+
+                        match child.wait_with_output() {
+                            Ok(out) => {
+                                if is_last {
+                                    let mut lines: Vec<String> =
+                                        String::from_utf8_lossy(&out.stdout)
+                                            .lines()
+                                            .map(String::from)
+                                            .collect();
+                                    let stderr: Vec<String> =
+                                        String::from_utf8_lossy(&out.stderr)
+                                            .lines()
+                                            .map(String::from)
+                                            .collect();
+                                    lines.extend(stderr);
+                                    last_result = SyncExecResult {
+                                        output: lines,
+                                        exit_code: out.status.code().unwrap_or(-1),
+                                        exit_app: false,
+                                        change_dir: false,
+                                    };
+                                } else {
+                                    prev_stdout = Some(out.stdout);
+                                    last_result.exit_code = out.status.code().unwrap_or(-1);
+                                }
+                            }
+                            Err(e) => {
+                                return SyncExecResult {
+                                    output: vec![format!("error: {e}")],
+                                    exit_code: -1,
+                                    exit_app: false,
+                                    change_dir: false,
+                                };
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        return SyncExecResult {
+                            output: vec![format!("error: {e}")],
+                            exit_code: -1,
+                            exit_app: false,
+                            change_dir: false,
+                        };
+                    }
+                }
+            }
+            CommandKind::Alias(_) | CommandKind::NotFound => {
+                let sync = execute_simple_sync(cmd);
+                if is_last {
+                    last_result = sync;
+                } else {
+                    prev_stdout = Some(sync.output.join("\n").into_bytes());
+                    last_result.exit_code = sync.exit_code;
+                }
+            }
+        }
+    }
+
+    last_result
+}
+
+/// Try to execute a pipeline, potentially spawning streaming (async) processes.
+/// Returns `PipelineResult` indicating how the pipeline should be handled by the TUI.
+pub fn execute_pipeline(pipeline: &Pipeline) -> PipelineResult {
+    // Single command — check if it's a builtin, interactive, or streamable external
+    if pipeline.commands.len() == 1 {
+        let cmd = &pipeline.commands[0];
+        let (kind, args) = resolve_simple(cmd);
+
+        match &kind {
+            CommandKind::External(path) => {
+                let words: Vec<String> = cmd.words.iter().map(|w| w.to_plain_string()).collect();
+                if super::is_interactive(&words[0], &args) {
+                    return PipelineResult::Interactive {
+                        path: path.clone(),
+                        args,
+                    };
+                }
+
+                // Spawn streaming
+                let redir = match build_redirect_config(&cmd.redirects, false) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return PipelineResult::Sync(SyncExecResult {
+                            output: vec![e],
+                            exit_code: 1,
+                            exit_app: false,
+                            change_dir: false,
+                        });
+                    }
+                };
+
+                let mut proc = Command::new(path);
+                super::super::widgets::force_color_env(proc.args(&args));
+                apply_stdio(&mut proc, redir);
+
+                match proc.spawn() {
+                    Ok(child) => PipelineResult::Streaming(StreamingSpawn {
+                        children: Vec::new(),
+                        last_child: child,
+                    }),
+                    Err(e) => PipelineResult::Sync(SyncExecResult {
+                        output: vec![format!("error: {e}")],
+                        exit_code: -1,
+                        exit_app: false,
+                        change_dir: false,
+                    }),
+                }
+            }
+            CommandKind::Script(entry) => {
+                let bun_path = match path_resolver::find_in_path("bun") {
+                    Some(p) => p,
+                    None => {
+                        return PipelineResult::Sync(SyncExecResult {
+                            output: vec![
+                                format!(
+                                    "error: script '{}' requires Bun but 'bun' was not found on PATH.",
+                                    entry.name
+                                ),
+                                "Install Bun from https://bun.sh".to_string(),
+                            ],
+                            exit_code: 1,
+                            exit_app: false,
+                            change_dir: false,
+                        });
+                    }
+                };
+
+                let redir = match build_redirect_config(&cmd.redirects, false) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return PipelineResult::Sync(SyncExecResult {
+                            output: vec![e],
+                            exit_code: 1,
+                            exit_app: false,
+                            change_dir: false,
+                        });
+                    }
+                };
+
+                let mut proc = Command::new(&bun_path);
+                super::super::widgets::force_color_env(
+                    proc.arg("run")
+                        .arg(&entry.entry_point)
+                        .args(&args)
+                        .current_dir(&entry.script_dir),
+                );
+                apply_stdio(&mut proc, redir);
+
+                match proc.spawn() {
+                    Ok(child) => PipelineResult::Streaming(StreamingSpawn {
+                        children: Vec::new(),
+                        last_child: child,
+                    }),
+                    Err(e) => PipelineResult::Sync(SyncExecResult {
+                        output: vec![format!("error: {e}")],
+                        exit_code: -1,
+                        exit_app: false,
+                        change_dir: false,
+                    }),
+                }
+            }
+            _ => {
+                // Builtins, aliases, not-found — execute synchronously
+                PipelineResult::Sync(execute_simple_sync(cmd))
+            }
+        }
+    } else {
+        // Multi-command pipeline: spawn all processes with piped I/O.
+        // Stream the last command's output to the TUI.
+        let mut children: Vec<Child> = Vec::new();
+        let mut prev_stdout: Option<Stdio> = None;
+
+        for (i, cmd) in pipeline.commands.iter().enumerate() {
+            let (kind, args) = resolve_simple(cmd);
+            let is_last = i == pipeline.commands.len() - 1;
+
+            match kind {
+                CommandKind::Builtin(builtin) => {
+                    // Execute builtin synchronously, feed output to next command
+                    let result = builtins::execute(builtin, &args);
+                    if is_last {
+                        return PipelineResult::Sync(SyncExecResult {
+                            output: result.output,
+                            exit_code: 0,
+                            exit_app: result.exit_app,
+                            change_dir: result.change_dir.is_some(),
+                        });
+                    }
+                    // For non-last builtins, we need to feed their output as stdin to the next command.
+                    // We'll handle this by spawning a helper that echoes the output.
+                    // Simpler approach: just use the sync pipeline path for pipelines containing builtins.
+                    return PipelineResult::Sync(execute_pipeline_sync(pipeline));
+                }
+                CommandKind::External(path) => {
+                    let mut proc = Command::new(&path);
+                    super::super::widgets::force_color_env(proc.args(&args));
+
+                    if let Some(stdin) = prev_stdout.take() {
+                        proc.stdin(stdin);
+                    }
+
+                    proc.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+                    // Apply file redirections
+                    for redir in &cmd.redirects {
+                        let target = redir.target.to_plain_string();
+                        match redir.kind {
+                            RedirectKind::StdoutOverwrite => {
+                                if let Ok(f) = File::create(&target) {
+                                    proc.stdout(Stdio::from(f));
+                                }
+                            }
+                            RedirectKind::StdoutAppend => {
+                                if let Ok(f) = OpenOptions::new().create(true).append(true).open(&target) {
+                                    proc.stdout(Stdio::from(f));
+                                }
+                            }
+                            RedirectKind::StdinRead => {
+                                if let Ok(f) = File::open(&target) {
+                                    proc.stdin(Stdio::from(f));
+                                }
+                            }
+                            RedirectKind::StderrOverwrite => {
+                                if let Ok(f) = File::create(&target) {
+                                    proc.stderr(Stdio::from(f));
+                                }
+                            }
+                            RedirectKind::StderrAppend => {
+                                if let Ok(f) = OpenOptions::new().create(true).append(true).open(&target) {
+                                    proc.stderr(Stdio::from(f));
+                                }
+                            }
+                            RedirectKind::StderrToStdout => {
+                                // Will merge after spawn
+                            }
+                        }
+                    }
+
+                    match proc.spawn() {
+                        Ok(mut child) => {
+                            if !is_last {
+                                if let Some(stdout) = child.stdout.take() {
+                                    prev_stdout = Some(Stdio::from(stdout));
+                                }
+                                children.push(child);
+                            } else {
+                                return PipelineResult::Streaming(StreamingSpawn {
+                                    children,
+                                    last_child: child,
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            // Kill any already-spawned children
+                            for mut c in children {
+                                let _ = c.kill();
+                                let _ = c.wait();
+                            }
+                            return PipelineResult::Sync(SyncExecResult {
+                                output: vec![format!("error: {e}")],
+                                exit_code: -1,
+                                exit_app: false,
+                                change_dir: false,
+                            });
+                        }
+                    }
+                }
+                CommandKind::Script(entry) => {
+                    let bun_path = match path_resolver::find_in_path("bun") {
+                        Some(p) => p,
+                        None => {
+                            for mut c in children {
+                                let _ = c.kill();
+                                let _ = c.wait();
+                            }
+                            return PipelineResult::Sync(SyncExecResult {
+                                output: vec![format!("error: script '{}' requires Bun", entry.name)],
+                                exit_code: 1,
+                                exit_app: false,
+                                change_dir: false,
+                            });
+                        }
+                    };
+
+                    let mut proc = Command::new(&bun_path);
+                    super::super::widgets::force_color_env(
+                        proc.arg("run")
+                            .arg(&entry.entry_point)
+                            .args(&args)
+                            .current_dir(&entry.script_dir),
+                    );
+
+                    if let Some(stdin) = prev_stdout.take() {
+                        proc.stdin(stdin);
+                    }
+                    proc.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+                    match proc.spawn() {
+                        Ok(mut child) => {
+                            if !is_last {
+                                if let Some(stdout) = child.stdout.take() {
+                                    prev_stdout = Some(Stdio::from(stdout));
+                                }
+                                children.push(child);
+                            } else {
+                                return PipelineResult::Streaming(StreamingSpawn {
+                                    children,
+                                    last_child: child,
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            for mut c in children {
+                                let _ = c.kill();
+                                let _ = c.wait();
+                            }
+                            return PipelineResult::Sync(SyncExecResult {
+                                output: vec![format!("error: {e}")],
+                                exit_code: -1,
+                                exit_app: false,
+                                change_dir: false,
+                            });
+                        }
+                    }
+                }
+                _ => {
+                    // Alias/NotFound in a pipeline — fallback to sync
+                    return PipelineResult::Sync(execute_pipeline_sync(pipeline));
+                }
+            }
+        }
+
+        // Should not reach here, but fallback
+        PipelineResult::Sync(SyncExecResult {
+            output: Vec::new(),
+            exit_code: 0,
+            exit_app: false,
+            change_dir: false,
+        })
+    }
+}
+
+/// Helper: apply file redirects directly to a Command (used in sync pipeline path).
+fn apply_redirects_to_command(cmd: &mut Command, redirects: &[Redirect]) {
+    for redir in redirects {
+        let target = redir.target.to_plain_string();
+        match redir.kind {
+            RedirectKind::StdoutOverwrite => {
+                if let Ok(f) = File::create(&target) {
+                    cmd.stdout(Stdio::from(f));
+                }
+            }
+            RedirectKind::StdoutAppend => {
+                if let Ok(f) = OpenOptions::new().create(true).append(true).open(&target) {
+                    cmd.stdout(Stdio::from(f));
+                }
+            }
+            RedirectKind::StdinRead => {
+                if let Ok(f) = File::open(&target) {
+                    cmd.stdin(Stdio::from(f));
+                }
+            }
+            RedirectKind::StderrOverwrite => {
+                if let Ok(f) = File::create(&target) {
+                    cmd.stderr(Stdio::from(f));
+                }
+            }
+            RedirectKind::StderrAppend => {
+                if let Ok(f) = OpenOptions::new().create(true).append(true).open(&target) {
+                    cmd.stderr(Stdio::from(f));
+                }
+            }
+            RedirectKind::StderrToStdout => {
+                // This is handled at a higher level
+            }
+        }
+    }
+}
