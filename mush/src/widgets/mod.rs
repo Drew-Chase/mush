@@ -69,6 +69,8 @@ pub struct App {
     last_help_prefix: Option<String>,
     script_watcher_rx: Receiver<()>,
     config_watcher_rx: Receiver<()>,
+    pending_path_scan: Option<Receiver<Vec<String>>>,
+    last_path_scan: Option<Instant>,
 }
 
 impl Drop for App {
@@ -175,6 +177,8 @@ impl App {
             last_help_prefix: None,
             script_watcher_rx,
             config_watcher_rx,
+            pending_path_scan: None,
+            last_path_scan: None,
         })
     }
 
@@ -197,11 +201,13 @@ impl App {
 
             self.drain_script_watcher();
             self.drain_config_watcher();
+            self.drain_path_scan();
 
             terminal.draw(|frame| self.draw(frame))?;
 
-            let needs_poll =
-                self.running_command.is_some() || !self.pending_help_lookups.is_empty();
+            let needs_poll = self.running_command.is_some()
+                || !self.pending_help_lookups.is_empty()
+                || self.pending_path_scan.is_some();
             if needs_poll {
                 if event::poll(Duration::from_millis(16))? {
                     self.handle_events()?;
@@ -827,6 +833,11 @@ impl App {
     }
 
     fn on_input_changed(&mut self) {
+        // Trigger async PATH rescan when user starts typing a new command
+        if self.input.buffer.len() == 1 {
+            self.spawn_path_scan();
+        }
+
         self.validate_input();
 
         let input = self.input.buffer.clone();
@@ -1111,6 +1122,45 @@ impl App {
                 Ok(()) => self.input.notify("Config reloaded".to_string()),
                 Err(e) => self.input.notify(format!("Config reload failed: {e}")),
             }
+        }
+    }
+
+    fn spawn_path_scan(&mut self) {
+        if self.pending_path_scan.is_some() {
+            return;
+        }
+        if let Some(last) = self.last_path_scan
+            && last.elapsed() < Duration::from_secs(5)
+        {
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let executables = shell::path_resolver::scan_path_executables();
+            let _ = tx.send(executables);
+        });
+        self.pending_path_scan = Some(rx);
+    }
+
+    fn drain_path_scan(&mut self) {
+        let rx = match &self.pending_path_scan {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        match rx.try_recv() {
+            Ok(executables) => {
+                shell::path_resolver::replace_executables(executables);
+                shell::path_resolver::invalidate_cache();
+                self.last_path_scan = Some(Instant::now());
+                self.pending_path_scan = None;
+                self.validate_input();
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.pending_path_scan = None;
+            }
+            Err(TryRecvError::Empty) => {}
         }
     }
 

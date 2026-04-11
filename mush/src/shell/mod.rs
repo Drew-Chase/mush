@@ -84,7 +84,7 @@ pub fn all_commands() -> Vec<CommandInfo> {
     // PATH executables
     for name in path_resolver::list_executables() {
         commands.push(CommandInfo {
-            name: name.clone(),
+            name,
             description: None,
         });
     }
