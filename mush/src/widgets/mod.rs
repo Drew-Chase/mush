@@ -74,7 +74,7 @@ pub struct App {
     pub autocomplete: Autocomplete,
     pub history_popover: HistoryPopover,
     pub history_nav: HistoryNavigator,
-    pub db: HistoryDb,
+    pub db: &'static HistoryDb,
     exit: bool,
     last_history_area: Rect,
     running_pipeline: Option<RunningPipeline>,
@@ -115,7 +115,9 @@ impl Drop for App {
 impl App {
     pub fn new() -> color_eyre::Result<Self> {
         let db_path = Config::get().db_path();
-        let db = HistoryDb::open(&db_path)?;
+        // Initialize global DB (ignore error if already initialized, e.g. in tests)
+        let _ = HistoryDb::init_global(&db_path);
+        let db = HistoryDb::global();
         let help_cache = db.load_all_help().unwrap_or_default();
 
         let mut history = CommandHistory::default();
@@ -348,7 +350,7 @@ impl App {
                             self.history_popover.close();
                         } else {
                             self.autocomplete.close();
-                            self.history_popover.open(&self.db);
+                            self.history_popover.open(self.db);
                         }
                     }
 
@@ -1376,7 +1378,7 @@ impl App {
     }
 
     fn history_nav_up(&mut self) {
-        if let Some(cmd) = self.history_nav.navigate_up(&self.db, &self.input.buffer) {
+        if let Some(cmd) = self.history_nav.navigate_up(self.db, &self.input.buffer) {
             self.input.buffer = cmd;
             self.input.cursor = self.input.buffer.len();
             self.validate_input();

@@ -230,7 +230,7 @@ pub fn execute_simple_sync(cmd: &SimpleCommand) -> SyncExecResult {
             let result = builtins::execute(builtin, &args);
             SyncExecResult {
                 output: result.output,
-                exit_code: 0,
+                exit_code: result.exit_code,
                 exit_app: result.exit_app,
                 change_dir: result.change_dir.is_some(),
             }
@@ -551,7 +551,7 @@ fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
                 if is_last {
                     last_result = SyncExecResult {
                         output: result.output,
-                        exit_code: 0,
+                        exit_code: result.exit_code,
                         exit_app: result.exit_app,
                         change_dir: result.change_dir.is_some(),
                     };
@@ -853,7 +853,7 @@ pub fn execute_pipeline(pipeline: &Pipeline) -> PipelineResult {
                     if is_last {
                         return PipelineResult::Sync(SyncExecResult {
                             output: result.output,
-                            exit_code: 0,
+                            exit_code: result.exit_code,
                             exit_app: result.exit_app,
                             change_dir: result.change_dir.is_some(),
                         });

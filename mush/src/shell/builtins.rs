@@ -12,6 +12,7 @@ pub struct BuiltinResult {
     pub output: Vec<String>,
     pub exit_app: bool,
     pub change_dir: Option<PathBuf>,
+    pub exit_code: i32,
 }
 
 pub fn lookup(name: &str) -> Option<BuiltinCommand> {
@@ -31,51 +32,42 @@ pub fn execute(cmd: BuiltinCommand, args: &[String]) -> BuiltinResult {
             output: Vec::new(),
             exit_app: false,
             change_dir: None,
+            exit_code: 0,
         },
         BuiltinCommand::Exit => BuiltinResult {
             output: Vec::new(),
             exit_app: true,
             change_dir: None,
+            exit_code: 0,
         },
         BuiltinCommand::Scripts => execute_scripts(args),
     }
 }
 
 fn execute_cd(args: &[String]) -> BuiltinResult {
+    let err = |msg: String| BuiltinResult {
+        output: vec![msg],
+        exit_app: false,
+        change_dir: None,
+        exit_code: 1,
+    };
+
     let target = if args.is_empty() {
         match home_dir() {
             Some(home) => home,
-            None => {
-                return BuiltinResult {
-                    output: vec!["cd: could not determine home directory".to_string()],
-                    exit_app: false,
-                    change_dir: None,
-                        };
-            }
+            None => return err("cd: could not determine home directory".to_string()),
         }
     } else {
         let path_str = &args[0];
         if path_str == "~" {
             match home_dir() {
                 Some(home) => home,
-                None => {
-                    return BuiltinResult {
-                        output: vec!["cd: could not determine home directory".to_string()],
-                        exit_app: false,
-                        change_dir: None,
-                                };
-                }
+                None => return err("cd: could not determine home directory".to_string()),
             }
         } else if let Some(rest) = path_str.strip_prefix("~/").or_else(|| path_str.strip_prefix("~\\")) {
             match home_dir() {
                 Some(home) => home.join(rest),
-                None => {
-                    return BuiltinResult {
-                        output: vec!["cd: could not determine home directory".to_string()],
-                        exit_app: false,
-                        change_dir: None,
-                                };
-                }
+                None => return err("cd: could not determine home directory".to_string()),
             }
         } else {
             PathBuf::from(path_str)
@@ -86,16 +78,19 @@ fn execute_cd(args: &[String]) -> BuiltinResult {
         Ok(()) => BuiltinResult {
             output: Vec::new(),
             exit_app: false,
-            change_dir: Some(
-                std::env::current_dir().unwrap_or(target),
-            ),
+            change_dir: Some(std::env::current_dir().unwrap_or(target)),
+            exit_code: 0,
         },
-        Err(e) => BuiltinResult {
-            output: vec![format!("cd: {}: {}", target.display(), e)],
-            exit_app: false,
-            change_dir: None,
-        },
+        Err(e) => err(format!("cd: {}: {}", target.display(), e)),
     }
+}
+
+fn ok(output: Vec<String>) -> BuiltinResult {
+    BuiltinResult { output, exit_app: false, change_dir: None, exit_code: 0 }
+}
+
+fn fail(msg: String) -> BuiltinResult {
+    BuiltinResult { output: vec![msg], exit_app: false, change_dir: None, exit_code: 1 }
 }
 
 fn execute_scripts(args: &[String]) -> BuiltinResult {
@@ -105,32 +100,18 @@ fn execute_scripts(args: &[String]) -> BuiltinResult {
         "new" => {
             let name = match args.get(1) {
                 Some(n) if !n.is_empty() => n,
-                _ => {
-                    return BuiltinResult {
-                        output: vec!["Usage: scripts new <name>".to_string()],
-                        exit_app: false,
-                        change_dir: None,
-                    };
-                }
+                _ => return fail("Usage: scripts new <name>".to_string()),
             };
 
             let scripts_dir = crate::get_appdata_path().join("scripts");
             let project_dir = scripts_dir.join(name);
 
             if project_dir.exists() {
-                return BuiltinResult {
-                    output: vec![format!("scripts: '{}' already exists", name)],
-                    exit_app: false,
-                    change_dir: None,
-                };
+                return fail(format!("scripts: '{}' already exists", name));
             }
 
             if let Err(e) = std::fs::create_dir_all(&project_dir) {
-                return BuiltinResult {
-                    output: vec![format!("scripts: failed to create directory: {e}")],
-                    exit_app: false,
-                    change_dir: None,
-                };
+                return fail(format!("scripts: failed to create directory: {e}"));
             }
 
             let package_json = format!(
@@ -170,19 +151,11 @@ program.parse();
             );
 
             if let Err(e) = std::fs::write(project_dir.join("package.json"), &package_json) {
-                return BuiltinResult {
-                    output: vec![format!("scripts: failed to write package.json: {e}")],
-                    exit_app: false,
-                    change_dir: None,
-                };
+                return fail(format!("scripts: failed to write package.json: {e}"));
             }
 
             if let Err(e) = std::fs::write(project_dir.join("index.ts"), &index_ts) {
-                return BuiltinResult {
-                    output: vec![format!("scripts: failed to write index.ts: {e}")],
-                    exit_app: false,
-                    change_dir: None,
-                };
+                return fail(format!("scripts: failed to write index.ts: {e}"));
             }
 
             let mut output = vec![
@@ -220,33 +193,21 @@ program.parse();
             super::script_registry::scan_scripts(&scripts_dir);
             output.push(format!("Script '{}' is now available as a command.", name));
 
-            BuiltinResult {
-                output,
-                exit_app: false,
-                change_dir: None,
-            }
+            ok(output)
         }
         "reload" => {
             let scripts_dir = crate::get_appdata_path().join("scripts");
             super::script_registry::scan_scripts(&scripts_dir);
             let count = super::script_registry::list_scripts().len();
-            BuiltinResult {
-                output: vec![format!("Reloaded {count} script(s).")],
-                exit_app: false,
-                change_dir: None,
-            }
+            ok(vec![format!("Reloaded {count} script(s).")])
         }
-        _ => BuiltinResult {
-            output: vec![
-                "Usage: scripts <command>".to_string(),
-                "".to_string(),
-                "Commands:".to_string(),
-                "  new <name>   Create a new script from template".to_string(),
-                "  reload       Reload all scripts from the scripts directory".to_string(),
-            ],
-            exit_app: false,
-            change_dir: None,
-        },
+        _ => ok(vec![
+            "Usage: scripts <command>".to_string(),
+            "".to_string(),
+            "Commands:".to_string(),
+            "  new <name>   Create a new script from template".to_string(),
+            "  reload       Reload all scripts from the scripts directory".to_string(),
+        ]),
     }
 }
 

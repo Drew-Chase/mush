@@ -86,6 +86,20 @@ impl Config {
         Ok(())
     }
 
+    /// Acquires a write lock, calls the closure with mutable config, then saves.
+    pub fn write_with<F, R>(f: F) -> Result<R>
+    where
+        F: FnOnce(&mut Config) -> R,
+    {
+        let lock = CONFIG
+            .get()
+            .ok_or_else(|| eyre!("Config not initialized"))?;
+        let mut writer = lock.write().map_err(|_| eyre!("Config RwLock poisoned"))?;
+        let result = f(&mut writer);
+        writer.save()?;
+        Ok(result)
+    }
+
     pub fn db_path(&self) -> PathBuf {
         self._save_path
             .as_ref()

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use color_eyre::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -7,6 +8,8 @@ use sqlx::{Row, SqlitePool};
 use tokio::runtime::{Builder, Runtime};
 
 use crate::shell::help_parser::CommandOption;
+
+static GLOBAL_DB: OnceLock<HistoryDb> = OnceLock::new();
 
 pub struct HistoryDb {
     pool: SqlitePool,
@@ -19,6 +22,22 @@ pub struct HistoryRecord {
 }
 
 impl HistoryDb {
+    /// Initialize the global HistoryDb instance. Call once at startup.
+    pub fn init_global(path: &Path) -> Result<()> {
+        let db = Self::open(path)?;
+        GLOBAL_DB
+            .set(db)
+            .map_err(|_| color_eyre::eyre::eyre!("HistoryDb already initialized"))?;
+        Ok(())
+    }
+
+    /// Get a reference to the global HistoryDb. Panics if not initialized.
+    pub fn global() -> &'static HistoryDb {
+        GLOBAL_DB
+            .get()
+            .expect("HistoryDb not initialized — call init_global() first")
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         let rt = Builder::new_current_thread().enable_all().build()?;
         let pool = rt.block_on(async {
@@ -129,6 +148,37 @@ impl HistoryDb {
                     exit_code: row.get("exit_code"),
                 })
                 .collect())
+        })
+    }
+
+    /// List history entries in chronological order (oldest first).
+    pub fn list(&self, limit: usize) -> Result<Vec<HistoryRecord>> {
+        self.rt.block_on(async {
+            let rows = sqlx::query(
+                "SELECT command, exit_code FROM command_history ORDER BY id DESC LIMIT ?1",
+            )
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await?;
+
+            Ok(rows
+                .iter()
+                .rev()
+                .map(|row| HistoryRecord {
+                    command: row.get("command"),
+                    exit_code: row.get("exit_code"),
+                })
+                .collect())
+        })
+    }
+
+    /// Clear all command history.
+    pub fn clear(&self) -> Result<()> {
+        self.rt.block_on(async {
+            sqlx::query("DELETE FROM command_history")
+                .execute(&self.pool)
+                .await?;
+            Ok(())
         })
     }
 
