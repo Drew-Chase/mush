@@ -489,11 +489,12 @@ impl App {
             return;
         }
 
-        // Expand variables ($VAR, ${VAR}, $?)
-        let env = shell::expand::ShellEnv {
+        // Expand variables ($VAR, ${VAR}, $?), globs, command substitution, process substitution
+        let mut env = shell::expand::ShellEnv {
             last_exit_code: self.last_exit_code,
+            temp_files: Vec::new(),
         };
-        let command_line = match shell::expand::expand(&command_line, &env) {
+        let command_line = match shell::expand::expand(&command_line, &mut env) {
             Ok(cl) => cl,
             Err(e) => {
                 self.history.add_entry(CommandEntry {
@@ -516,6 +517,11 @@ impl App {
             if self.exit {
                 break;
             }
+        }
+
+        // Clean up temp files from process substitution
+        for path in &env.temp_files {
+            let _ = std::fs::remove_file(path);
         }
 
         self.input.valid_command = true;

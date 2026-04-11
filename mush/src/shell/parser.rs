@@ -127,7 +127,14 @@ impl<'a> Lexer<'a> {
             }
             '<' => {
                 self.chars.next();
-                if self.chars.peek() == Some(&'<') {
+                if self.chars.peek() == Some(&'(') {
+                    // <(cmd) — process substitution
+                    self.chars.next(); // consume '('
+                    let inner = self.read_command_substitution();
+                    Ok(Token::Word(Word {
+                        parts: vec![WordPart::ProcessSubstitution(inner)],
+                    }))
+                } else if self.chars.peek() == Some(&'<') {
                     self.chars.next(); // consume second <
                     if self.chars.peek() == Some(&'<') {
                         self.chars.next(); // consume third <
@@ -976,6 +983,27 @@ mod tests {
     fn foreground_not_background() {
         let cl = parse_ok("echo hello");
         assert!(!cl.chains[0].background);
+    }
+
+    #[test]
+    fn process_substitution() {
+        let cl = parse_ok("diff <(sort a.txt) <(sort b.txt)");
+        let words: Vec<String> = cl.chains[0].first.commands[0]
+            .words
+            .iter()
+            .map(|w| w.to_plain_string())
+            .collect();
+        assert_eq!(words, vec!["diff", "<(sort a.txt)", "<(sort b.txt)"]);
+    }
+
+    #[test]
+    fn process_substitution_parsed_as_word() {
+        let cl = parse_ok("echo <(whoami)");
+        let parts = &cl.chains[0].first.commands[0].words[1].parts;
+        match &parts[0] {
+            WordPart::ProcessSubstitution(inner) => assert_eq!(inner, "whoami"),
+            other => panic!("expected ProcessSubstitution, got {other:?}"),
+        }
     }
 
     #[test]

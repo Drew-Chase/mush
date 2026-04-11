@@ -85,6 +85,11 @@ impl Word {
                     out.push(')');
                 }
                 WordPart::GlobPattern(s) => out.push_str(s),
+                WordPart::ProcessSubstitution(s) => {
+                    out.push_str("<(");
+                    out.push_str(s);
+                    out.push(')');
+                }
             }
         }
         out
@@ -109,6 +114,8 @@ pub enum WordPart {
     CommandSubstitution(String),
     /// Glob metacharacters: `*`, `?`, `[...]`.
     GlobPattern(String),
+    /// `<(cmd)` — process substitution. The inner command string.
+    ProcessSubstitution(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

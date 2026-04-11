@@ -1,9 +1,13 @@
 use super::ast::*;
 use std::fmt;
+use std::io::Write as IoWrite;
+use std::path::PathBuf;
 
 /// Shell state needed for expansion.
 pub struct ShellEnv {
     pub last_exit_code: i32,
+    /// Temp files created by process substitution, to be cleaned up after execution.
+    pub temp_files: Vec<PathBuf>,
 }
 
 const MAX_SUBSTITUTION_DEPTH: u32 = 64;
@@ -34,15 +38,16 @@ impl fmt::Display for ExpansionError {
     }
 }
 
-/// Expand all variable references, `$?`, `$(cmd)`, and globs in a CommandLine AST.
+/// Expand all variable references, `$?`, `$(cmd)`, globs, and process substitutions.
 /// Returns a new CommandLine with all expansions resolved to literals.
-pub fn expand(cmd_line: &CommandLine, env: &ShellEnv) -> Result<CommandLine, ExpansionError> {
+/// Temp files created by process substitution are tracked in `env.temp_files`.
+pub fn expand(cmd_line: &CommandLine, env: &mut ShellEnv) -> Result<CommandLine, ExpansionError> {
     expand_with_depth(cmd_line, env, 0)
 }
 
 fn expand_with_depth(
     cmd_line: &CommandLine,
-    env: &ShellEnv,
+    env: &mut ShellEnv,
     depth: u32,
 ) -> Result<CommandLine, ExpansionError> {
     if depth > MAX_SUBSTITUTION_DEPTH {
@@ -55,7 +60,7 @@ fn expand_with_depth(
     Ok(CommandLine { chains })
 }
 
-fn expand_chain(chain: &Chain, env: &ShellEnv, depth: u32) -> Result<Chain, ExpansionError> {
+fn expand_chain(chain: &Chain, env: &mut ShellEnv, depth: u32) -> Result<Chain, ExpansionError> {
     let first = expand_pipeline(&chain.first, env, depth)?;
     let mut rest = Vec::with_capacity(chain.rest.len());
     for (op, pipeline) in &chain.rest {
@@ -70,7 +75,7 @@ fn expand_chain(chain: &Chain, env: &ShellEnv, depth: u32) -> Result<Chain, Expa
 
 fn expand_pipeline(
     pipeline: &Pipeline,
-    env: &ShellEnv,
+    env: &mut ShellEnv,
     depth: u32,
 ) -> Result<Pipeline, ExpansionError> {
     if let Some(ref inner) = pipeline.subshell {
@@ -93,7 +98,7 @@ fn expand_pipeline(
 
 fn expand_simple_command(
     cmd: &SimpleCommand,
-    env: &ShellEnv,
+    env: &mut ShellEnv,
     depth: u32,
 ) -> Result<SimpleCommand, ExpansionError> {
     let mut words = Vec::new();
@@ -154,7 +159,7 @@ fn expand_globs(word: &Word) -> Vec<Word> {
     }
 }
 
-fn expand_word(word: &Word, env: &ShellEnv, depth: u32) -> Result<Word, ExpansionError> {
+fn expand_word(word: &Word, env: &mut ShellEnv, depth: u32) -> Result<Word, ExpansionError> {
     let mut new_parts = Vec::new();
     for part in &word.parts {
         expand_word_part(part, env, depth, &mut new_parts)?;
@@ -164,7 +169,7 @@ fn expand_word(word: &Word, env: &ShellEnv, depth: u32) -> Result<Word, Expansio
 
 fn expand_word_part(
     part: &WordPart,
-    env: &ShellEnv,
+    env: &mut ShellEnv,
     depth: u32,
     out: &mut Vec<WordPart>,
 ) -> Result<(), ExpansionError> {
@@ -202,14 +207,62 @@ fn expand_word_part(
         WordPart::GlobPattern(s) => {
             out.push(WordPart::GlobPattern(s.clone()));
         }
+        WordPart::ProcessSubstitution(inner_cmd) => {
+            let path = execute_process_substitution(inner_cmd, env, depth)?;
+            out.push(WordPart::Literal(path));
+        }
     }
     Ok(())
+}
+
+/// Execute a process substitution: run command, write output to temp file, return path.
+fn execute_process_substitution(
+    inner_cmd: &str,
+    env: &mut ShellEnv,
+    depth: u32,
+) -> Result<String, ExpansionError> {
+    if depth + 1 > MAX_SUBSTITUTION_DEPTH {
+        return Err(ExpansionError::MaxDepthExceeded);
+    }
+
+    // Parse the inner command
+    let cmd_line = super::parser::parse(inner_cmd)
+        .map_err(|e| ExpansionError::CommandSubstitutionFailed(format!("parse error: {e}")))?;
+
+    // Recursively expand
+    let expanded = expand_with_depth(&cmd_line, env, depth + 1)?;
+
+    // Execute all chains synchronously and collect output
+    let mut all_output = Vec::new();
+    for chain in &expanded.chains {
+        let result = super::pipeline::execute_chain_sync(chain);
+        all_output.extend(result.output);
+    }
+
+    // Write output to a temp file
+    let mut temp_file = tempfile::NamedTempFile::new()
+        .map_err(|e| ExpansionError::CommandSubstitutionFailed(format!("temp file: {e}")))?;
+
+    let content = all_output.join("\n");
+    temp_file
+        .write_all(content.as_bytes())
+        .map_err(|e| ExpansionError::CommandSubstitutionFailed(format!("write: {e}")))?;
+
+    // Persist the temp file so it outlives this function
+    let (_, path) = temp_file
+        .keep()
+        .map_err(|e| ExpansionError::CommandSubstitutionFailed(format!("persist: {e}")))?;
+
+    let path_str = path.to_string_lossy().to_string();
+    env.temp_files.push(path);
+
+    Ok(path_str)
 }
 
 /// Execute a command substitution: parse, expand, execute, capture stdout.
 fn execute_command_substitution(
     inner_cmd: &str,
-    env: &ShellEnv,
+    env: &mut ShellEnv,
     depth: u32,
 ) -> Result<String, ExpansionError> {
     if depth + 1 > MAX_SUBSTITUTION_DEPTH {
@@ -239,11 +292,11 @@ fn execute_command_substitution(
     Ok(output)
 }
 
-fn resolve_variable(name: &str, _env: &ShellEnv) -> String {
+fn resolve_variable(name: &str, _env: &mut ShellEnv) -> String {
     std::env::var(name).unwrap_or_default()
 }
 
-fn resolve_braced_variable(var: &VarRef, _env: &ShellEnv) -> Result<String, ExpansionError> {
+fn resolve_braced_variable(var: &VarRef, _env: &mut ShellEnv) -> Result<String, ExpansionError> {
     let value = std::env::var(&var.name).ok();
     let is_set_and_nonempty = value.as_ref().is_some_and(|v| !v.is_empty());
 
@@ -292,10 +345,11 @@ mod tests {
 
     fn expand_input(input: &str, exit_code: i32) -> Result<CommandLine, ExpansionError> {
         let cl = parser::parse(input).unwrap();
-        let env = ShellEnv {
+        let mut env = ShellEnv {
             last_exit_code: exit_code,
+            temp_files: Vec::new(),
         };
-        expand(&cl, &env)
+        expand(&cl, &mut env)
     }
 
     fn first_words(input: &str) -> Vec<String> {
