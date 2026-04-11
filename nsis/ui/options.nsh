@@ -64,7 +64,7 @@ Function OptionsPage
     ; Default: unchecked — this is aggressive for a new install
     ${NSD_SetState} $ChkSetDefaultShell ${BST_UNCHECKED}
 
-    ${NSD_CreateLabel} 40u 102u 260u 12u "Sets COMSPEC to mush.exe. Only recommended if you are replacing your current shell."
+    ${NSD_CreateLabel} 40u 102u 260u 20u "Sets COMSPEC to mush.exe. Only recommended if you are replacing your current shell."
     Pop $0
     SetCtlColors $0 "888888" transparent
 

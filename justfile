@@ -23,8 +23,12 @@ package: clean
     cargo build --workspace --release --message-format=json | jq -r 'select(.reason == "compiler-artifact" and .executable != null) | .executable' | xargs -I {} cp {} "{{dist_dir}}/"
 
 [windows]
-installer: package
+installer: updater
     makensis nsis\installer.nsis
+
+[windows]
+updater: package
+    makensis nsis\updater.nsis
 
 install:
     cargo install --bin mush --path ./mush/
