@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy)]
 pub enum BuiltinCommand {
@@ -6,6 +6,18 @@ pub enum BuiltinCommand {
     Clear,
     Exit,
     Scripts,
+    Pwd,
+    Export,
+    Unset,
+    Printf,
+    Env,
+    Alias,
+    Unalias,
+    Type,
+    History,
+    Source,
+    Read,
+    Test,
 }
 
 pub struct BuiltinResult {
@@ -21,6 +33,18 @@ pub fn lookup(name: &str) -> Option<BuiltinCommand> {
         "clear" | "cls" => Some(BuiltinCommand::Clear),
         "exit" => Some(BuiltinCommand::Exit),
         "scripts" => Some(BuiltinCommand::Scripts),
+        "pwd" => Some(BuiltinCommand::Pwd),
+        "export" => Some(BuiltinCommand::Export),
+        "unset" => Some(BuiltinCommand::Unset),
+        "printf" => Some(BuiltinCommand::Printf),
+        "env" => Some(BuiltinCommand::Env),
+        "alias" => Some(BuiltinCommand::Alias),
+        "unalias" => Some(BuiltinCommand::Unalias),
+        "type" | "which" => Some(BuiltinCommand::Type),
+        "history" => Some(BuiltinCommand::History),
+        "source" | "." => Some(BuiltinCommand::Source),
+        "read" => Some(BuiltinCommand::Read),
+        "test" | "[" => Some(BuiltinCommand::Test),
         _ => None,
     }
 }
@@ -28,12 +52,7 @@ pub fn lookup(name: &str) -> Option<BuiltinCommand> {
 pub fn execute(cmd: BuiltinCommand, args: &[String]) -> BuiltinResult {
     match cmd {
         BuiltinCommand::Cd => execute_cd(args),
-        BuiltinCommand::Clear => BuiltinResult {
-            output: Vec::new(),
-            exit_app: false,
-            change_dir: None,
-            exit_code: 0,
-        },
+        BuiltinCommand::Clear => ok(Vec::new()),
         BuiltinCommand::Exit => BuiltinResult {
             output: Vec::new(),
             exit_app: true,
@@ -41,6 +60,18 @@ pub fn execute(cmd: BuiltinCommand, args: &[String]) -> BuiltinResult {
             exit_code: 0,
         },
         BuiltinCommand::Scripts => execute_scripts(args),
+        BuiltinCommand::Pwd => execute_pwd(args),
+        BuiltinCommand::Export => execute_export(args),
+        BuiltinCommand::Unset => execute_unset(args),
+        BuiltinCommand::Printf => execute_printf(args),
+        BuiltinCommand::Env => execute_env(args),
+        BuiltinCommand::Alias => execute_alias(args),
+        BuiltinCommand::Unalias => execute_unalias(args),
+        BuiltinCommand::Type => execute_type(args),
+        BuiltinCommand::History => execute_history(args),
+        BuiltinCommand::Source => execute_source(args),
+        BuiltinCommand::Read => execute_read(args),
+        BuiltinCommand::Test => execute_test(args),
     }
 }
 
@@ -208,6 +239,788 @@ program.parse();
             "  new <name>   Create a new script from template".to_string(),
             "  reload       Reload all scripts from the scripts directory".to_string(),
         ]),
+    }
+}
+
+// ── pwd ─────────────────────────────────────────────────────────────────────
+
+fn execute_pwd(args: &[String]) -> BuiltinResult {
+    let physical = args.iter().any(|a| a == "-P" || a == "--physical");
+    match std::env::current_dir() {
+        Ok(cwd) => {
+            let path = if physical {
+                std::fs::canonicalize(&cwd).unwrap_or(cwd)
+            } else {
+                cwd
+            };
+            ok(vec![path.to_string_lossy().to_string()])
+        }
+        Err(e) => fail(format!("pwd: {e}")),
+    }
+}
+
+// ── export ──────────────────────────────────────────────────────────────────
+
+fn execute_export(args: &[String]) -> BuiltinResult {
+    if args.is_empty() || args.iter().any(|a| a == "-p") {
+        let mut vars: Vec<(String, String)> = std::env::vars().collect();
+        vars.sort_by(|a, b| a.0.cmp(&b.0));
+        let lines: Vec<String> = vars
+            .iter()
+            .map(|(k, v)| format!("declare -x {k}=\"{v}\""))
+            .collect();
+        return ok(lines);
+    }
+
+    for arg in args {
+        if arg == "-p" || arg == "-n" {
+            continue;
+        }
+        if let Some((key, value)) = arg.split_once('=')
+            && !key.is_empty()
+        {
+            // SAFETY: mush is single-threaded for command execution
+            unsafe { std::env::set_var(key, value) };
+        }
+        // `export VAR` without = is a no-op (var is already in env if set)
+    }
+    ok(Vec::new())
+}
+
+// ── unset ───────────────────────────────────────────────────────────────────
+
+fn execute_unset(args: &[String]) -> BuiltinResult {
+    for arg in args {
+        if arg == "-v" || arg == "-f" {
+            continue;
+        }
+        // SAFETY: mush is single-threaded for command execution
+        unsafe { std::env::remove_var(arg) };
+    }
+    ok(Vec::new())
+}
+
+// ── printf ──────────────────────────────────────────────────────────────────
+
+fn execute_printf(args: &[String]) -> BuiltinResult {
+    if args.is_empty() {
+        return fail("printf: usage: printf FORMAT [ARGUMENT]...".to_string());
+    }
+
+    let format = &args[0];
+    let params = &args[1..];
+    let mut param_idx = 0;
+    let mut output = String::new();
+    let mut chars = format.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                match chars.next() {
+                    Some('n') => output.push('\n'),
+                    Some('t') => output.push('\t'),
+                    Some('r') => output.push('\r'),
+                    Some('\\') => output.push('\\'),
+                    Some('0') => {
+                        // Octal: \0NNN
+                        let mut oct = String::new();
+                        for _ in 0..3 {
+                            if let Some(&d) = chars.peek() {
+                                if d.is_ascii_digit() && d != '8' && d != '9' {
+                                    oct.push(d);
+                                    chars.next();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        if let Ok(val) = u8::from_str_radix(&oct, 8) {
+                            output.push(val as char);
+                        }
+                    }
+                    Some(other) => {
+                        output.push('\\');
+                        output.push(other);
+                    }
+                    None => output.push('\\'),
+                }
+            }
+            '%' => {
+                let param = if param_idx < params.len() {
+                    &params[param_idx]
+                } else {
+                    ""
+                };
+                param_idx += 1;
+
+                match chars.next() {
+                    Some('s') => output.push_str(param),
+                    Some('d') | Some('i') => {
+                        let n: i64 = param.parse().unwrap_or(0);
+                        output.push_str(&n.to_string());
+                    }
+                    Some('u') => {
+                        let n: u64 = param.parse().unwrap_or(0);
+                        output.push_str(&n.to_string());
+                    }
+                    Some('f') => {
+                        let f: f64 = param.parse().unwrap_or(0.0);
+                        output.push_str(&format!("{f:.6}"));
+                    }
+                    Some('e') => {
+                        let f: f64 = param.parse().unwrap_or(0.0);
+                        output.push_str(&format!("{f:e}"));
+                    }
+                    Some('x') => {
+                        let n: i64 = param.parse().unwrap_or(0);
+                        output.push_str(&format!("{n:x}"));
+                    }
+                    Some('X') => {
+                        let n: i64 = param.parse().unwrap_or(0);
+                        output.push_str(&format!("{n:X}"));
+                    }
+                    Some('o') => {
+                        let n: i64 = param.parse().unwrap_or(0);
+                        output.push_str(&format!("{n:o}"));
+                    }
+                    Some('c') => {
+                        if let Some(ch) = param.chars().next() {
+                            output.push(ch);
+                        }
+                    }
+                    Some('b') => {
+                        // Interpret backslash escapes in the argument
+                        output.push_str(&interpret_escapes(param));
+                    }
+                    Some('%') => {
+                        param_idx -= 1; // %% doesn't consume a parameter
+                        output.push('%');
+                    }
+                    Some(other) => {
+                        output.push('%');
+                        output.push(other);
+                        param_idx -= 1;
+                    }
+                    None => output.push('%'),
+                }
+            }
+            _ => output.push(c),
+        }
+    }
+
+    let lines: Vec<String> = output.lines().map(String::from).collect();
+    ok(if lines.is_empty() && !output.is_empty() {
+        vec![output]
+    } else {
+        lines
+    })
+}
+
+fn interpret_escapes(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+// ── env ─────────────────────────────────────────────────────────────────────
+
+fn execute_env(args: &[String]) -> BuiltinResult {
+    let mut unset_vars = Vec::new();
+    let mut ignore_env = false;
+    let mut set_vars = Vec::new();
+    let mut cmd_start = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-i" || arg == "--ignore-environment" {
+            ignore_env = true;
+        } else if arg == "-u" || arg == "--unset" {
+            i += 1;
+            if i < args.len() {
+                unset_vars.push(args[i].clone());
+            }
+        } else if let Some((key, value)) = arg.split_once('=') {
+            if !key.is_empty() {
+                set_vars.push((key.to_string(), value.to_string()));
+            }
+        } else {
+            cmd_start = Some(i);
+            break;
+        }
+        i += 1;
+    }
+
+    if let Some(start) = cmd_start {
+        // env VAR=val command args... — run command with modified env
+        let saved_env: Vec<(String, String)> = std::env::vars().collect();
+        let saved_cwd = std::env::current_dir().ok();
+
+        if ignore_env {
+            for (k, _) in &saved_env {
+                unsafe { std::env::remove_var(k) };
+            }
+        }
+        for name in &unset_vars {
+            unsafe { std::env::remove_var(name) };
+        }
+        for (k, v) in &set_vars {
+            unsafe { std::env::set_var(k, v) };
+        }
+
+        // Build and execute the command
+        let cmd_str = args[start..].join(" ");
+        let result = match super::parser::parse(&cmd_str) {
+            Ok(cl) => {
+                let mut all_output = Vec::new();
+                let mut exit_code = 0;
+                for chain in &cl.chains {
+                    let r = super::pipeline::execute_chain_sync(chain);
+                    all_output.extend(r.output);
+                    exit_code = r.exit_code;
+                }
+                BuiltinResult {
+                    output: all_output,
+                    exit_app: false,
+                    change_dir: None,
+                    exit_code,
+                }
+            }
+            Err(e) => fail(format!("env: {e}")),
+        };
+
+        // Restore environment
+        let current_env: std::collections::HashSet<String> =
+            std::env::vars().map(|(k, _)| k).collect();
+        let saved_keys: std::collections::HashSet<String> =
+            saved_env.iter().map(|(k, _)| k.clone()).collect();
+        for key in &current_env {
+            if !saved_keys.contains(key) {
+                unsafe { std::env::remove_var(key) };
+            }
+        }
+        for (key, value) in &saved_env {
+            unsafe { std::env::set_var(key, value) };
+        }
+        if let Some(cwd) = saved_cwd {
+            let _ = std::env::set_current_dir(cwd);
+        }
+
+        result
+    } else {
+        // No command — just print environment
+        let mut vars: Vec<(String, String)> = if ignore_env {
+            Vec::new()
+        } else {
+            std::env::vars().collect()
+        };
+        // Apply unsets
+        vars.retain(|(k, _)| !unset_vars.contains(k));
+        // Apply sets
+        for (k, v) in &set_vars {
+            if let Some(entry) = vars.iter_mut().find(|(ek, _)| ek == k) {
+                entry.1 = v.clone();
+            } else {
+                vars.push((k.clone(), v.clone()));
+            }
+        }
+        vars.sort_by(|a, b| a.0.cmp(&b.0));
+        let lines: Vec<String> = vars.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        ok(lines)
+    }
+}
+
+// ── alias / unalias ─────────────────────────────────────────────────────────
+
+fn execute_alias(args: &[String]) -> BuiltinResult {
+    use crate::config::Config;
+
+    if args.is_empty() {
+        // List all aliases
+        let config = Config::get();
+        let mut entries: Vec<(&String, &String)> = config.alias.entries.iter().collect();
+        entries.sort_by_key(|(k, _)| (*k).clone());
+        let lines: Vec<String> = entries
+            .iter()
+            .map(|(name, value)| format!("alias {name}='{value}'"))
+            .collect();
+        return ok(lines);
+    }
+
+    let mut output = Vec::new();
+    for arg in args {
+        if let Some((name, value)) = arg.split_once('=') {
+            // Define alias
+            let name = name.to_string();
+            let value = value.to_string();
+            match Config::write_with(|c| {
+                c.alias.entries.insert(name.clone(), value);
+            }) {
+                Ok(()) => {}
+                Err(e) => output.push(format!("alias: {e}")),
+            }
+        } else {
+            // Show specific alias
+            let config = Config::get();
+            match config.alias.entries.get(arg) {
+                Some(value) => output.push(format!("alias {arg}='{value}'")),
+                None => {
+                    output.push(format!("alias: {arg}: not found"));
+                    return BuiltinResult {
+                        output,
+                        exit_app: false,
+                        change_dir: None,
+                        exit_code: 1,
+                    };
+                }
+            }
+        }
+    }
+    ok(output)
+}
+
+fn execute_unalias(args: &[String]) -> BuiltinResult {
+    use crate::config::Config;
+
+    if args.is_empty() {
+        return fail("unalias: usage: unalias [-a] name [name ...]".to_string());
+    }
+
+    if args.iter().any(|a| a == "-a") {
+        // Remove all aliases
+        match Config::write_with(|c| {
+            c.alias.entries.clear();
+        }) {
+            Ok(()) => return ok(Vec::new()),
+            Err(e) => return fail(format!("unalias: {e}")),
+        }
+    }
+
+    let mut exit_code = 0;
+    let mut output = Vec::new();
+    for arg in args {
+        match crate::config::Config::write_with(|c| c.alias.entries.remove(arg).is_some()) {
+            Ok(true) => {}
+            Ok(false) => {
+                output.push(format!("unalias: {arg}: not found"));
+                exit_code = 1;
+            }
+            Err(e) => {
+                output.push(format!("unalias: {e}"));
+                exit_code = 1;
+            }
+        }
+    }
+    BuiltinResult {
+        output,
+        exit_app: false,
+        change_dir: None,
+        exit_code,
+    }
+}
+
+// ── type / which ────────────────────────────────────────────────────────────
+
+fn execute_type(args: &[String]) -> BuiltinResult {
+    let mut output = Vec::new();
+    let mut exit_code = 0;
+    let show_all = args.iter().any(|a| a == "-a" || a == "--all");
+    let type_only = args.iter().any(|a| a == "-t" || a == "--type");
+
+    for arg in args {
+        if arg.starts_with('-') {
+            continue;
+        }
+        let mut found = false;
+
+        // Check builtin
+        if lookup(arg).is_some() {
+            if type_only {
+                output.push("builtin".to_string());
+            } else {
+                output.push(format!("{arg} is a shell builtin"));
+            }
+            found = true;
+            if !show_all {
+                continue;
+            }
+        }
+
+        // Check alias
+        {
+            let config = crate::config::Config::get();
+            if let Some(value) = config.alias.entries.get(arg) {
+                if type_only {
+                    output.push("alias".to_string());
+                } else {
+                    output.push(format!("{arg} is aliased to '{value}'"));
+                }
+                found = true;
+                if !show_all {
+                    continue;
+                }
+            }
+        }
+
+        // Check script
+        if let Some(entry) = super::script_registry::find_script(arg) {
+            if type_only {
+                output.push("script".to_string());
+            } else {
+                output.push(format!("{arg} is a mush script ({})", entry.entry_point.display()));
+            }
+            found = true;
+            if !show_all {
+                continue;
+            }
+        }
+
+        // Check external
+        if let Some(path) = super::path_resolver::find_in_path(arg) {
+            if type_only {
+                output.push("file".to_string());
+            } else {
+                output.push(format!("{arg} is {}", path.display()));
+            }
+            found = true;
+        }
+
+        if !found {
+            if !type_only {
+                output.push(format!("{arg}: not found"));
+            }
+            exit_code = 1;
+        }
+    }
+
+    BuiltinResult {
+        output,
+        exit_app: false,
+        change_dir: None,
+        exit_code,
+    }
+}
+
+// ── history ─────────────────────────────────────────────────────────────────
+
+fn execute_history(args: &[String]) -> BuiltinResult {
+    let db = crate::db::HistoryDb::global();
+
+    if args.is_empty() {
+        match db.list(50) {
+            Ok(entries) => {
+                let lines: Vec<String> = entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| format!("{:5}  {}", i + 1, r.command))
+                    .collect();
+                ok(lines)
+            }
+            Err(e) => fail(format!("history: {e}")),
+        }
+    } else if args[0] == "-c" || args[0] == "--clear" {
+        match db.clear() {
+            Ok(()) => ok(vec!["History cleared.".to_string()]),
+            Err(e) => fail(format!("history: {e}")),
+        }
+    } else if let Ok(n) = args[0].parse::<usize>() {
+        match db.list(n) {
+            Ok(entries) => {
+                let lines: Vec<String> = entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| format!("{:5}  {}", i + 1, r.command))
+                    .collect();
+                ok(lines)
+            }
+            Err(e) => fail(format!("history: {e}")),
+        }
+    } else {
+        fail("history: usage: history [-c|--clear] [N]".to_string())
+    }
+}
+
+// ── source ──────────────────────────────────────────────────────────────────
+
+fn execute_source(args: &[String]) -> BuiltinResult {
+    if args.is_empty() {
+        return fail("source: usage: source FILE [ARGUMENTS]...".to_string());
+    }
+
+    let file_path = Path::new(&args[0]);
+    let content = match std::fs::read_to_string(file_path) {
+        Ok(c) => c,
+        Err(e) => return fail(format!("source: {}: {e}", args[0])),
+    };
+
+    let mut all_output = Vec::new();
+    let mut exit_code = 0;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        match super::parser::parse(trimmed) {
+            Ok(cl) => {
+                for chain in &cl.chains {
+                    let result = super::pipeline::execute_chain_sync(chain);
+                    all_output.extend(result.output);
+                    exit_code = result.exit_code;
+                }
+            }
+            Err(e) => {
+                all_output.push(format!("source: parse error: {e}"));
+                exit_code = 1;
+            }
+        }
+    }
+
+    BuiltinResult {
+        output: all_output,
+        exit_app: false,
+        change_dir: None,
+        exit_code,
+    }
+}
+
+// ── read ────────────────────────────────────────────────────────────────────
+
+fn execute_read(args: &[String]) -> BuiltinResult {
+    // In a TUI shell, read works with piped input only.
+    // Interactive prompting is not supported yet.
+    let mut var_names = Vec::new();
+    let mut prompt = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "-p" | "--prompt" => {
+                i += 1;
+                if i < args.len() {
+                    prompt = Some(args[i].clone());
+                }
+            }
+            "-r" | "--raw" | "-s" | "--silent" => {
+                // Accepted but no special handling in piped mode
+            }
+            arg if !arg.starts_with('-') => {
+                var_names.push(arg.to_string());
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    if var_names.is_empty() {
+        var_names.push("REPLY".to_string());
+    }
+
+    // Show prompt in output if specified
+    let mut output = Vec::new();
+    if let Some(p) = prompt {
+        output.push(p);
+    }
+
+    // Since we don't have stdin_data passed to builtins yet,
+    // read from environment-available sources.
+    // For piped input, the pipeline would need to pass stdin_data.
+    // For now, return exit code 1 (no input available).
+    BuiltinResult {
+        output,
+        exit_app: false,
+        change_dir: None,
+        exit_code: 1,
+    }
+}
+
+// ── test / [ ────────────────────────────────────────────────────────────────
+
+fn execute_test(args: &[String]) -> BuiltinResult {
+    let mut test_args = args.to_vec();
+
+    // If invoked as [, strip trailing ]
+    if !test_args.is_empty() && test_args.last().map(|s| s.as_str()) == Some("]") {
+        test_args.pop();
+    }
+
+    if test_args.is_empty() {
+        // Empty expression is false
+        return BuiltinResult {
+            output: Vec::new(),
+            exit_app: false,
+            change_dir: None,
+            exit_code: 1,
+        };
+    }
+
+    match eval_test_expr(&test_args) {
+        Ok(true) => BuiltinResult {
+            output: Vec::new(),
+            exit_app: false,
+            change_dir: None,
+            exit_code: 0,
+        },
+        Ok(false) => BuiltinResult {
+            output: Vec::new(),
+            exit_app: false,
+            change_dir: None,
+            exit_code: 1,
+        },
+        Err(msg) => BuiltinResult {
+            output: vec![format!("test: {msg}")],
+            exit_app: false,
+            change_dir: None,
+            exit_code: 2,
+        },
+    }
+}
+
+fn eval_test_expr(args: &[String]) -> Result<bool, String> {
+    if args.is_empty() {
+        return Ok(false);
+    }
+
+    // Handle negation: ! expr
+    if args[0] == "!" {
+        return eval_test_expr(&args[1..]).map(|r| !r);
+    }
+
+    // Single arg: true if non-empty string
+    if args.len() == 1 {
+        return Ok(!args[0].is_empty());
+    }
+
+    // Two args: unary operator
+    if args.len() == 2 {
+        return eval_unary(&args[0], &args[1]);
+    }
+
+    // Three args: binary operator or compound with -a/-o
+    if args.len() == 3 {
+        return eval_binary(&args[0], &args[1], &args[2]);
+    }
+
+    // More args: look for -a (AND) and -o (OR) at the top level
+    // -o has lower precedence than -a
+    for i in (0..args.len()).rev() {
+        if args[i] == "-o" {
+            let left = eval_test_expr(&args[..i])?;
+            let right = eval_test_expr(&args[i + 1..])?;
+            return Ok(left || right);
+        }
+    }
+    for i in (0..args.len()).rev() {
+        if args[i] == "-a" {
+            let left = eval_test_expr(&args[..i])?;
+            let right = eval_test_expr(&args[i + 1..])?;
+            return Ok(left && right);
+        }
+    }
+
+    Err("too many arguments".to_string())
+}
+
+fn eval_unary(op: &str, operand: &str) -> Result<bool, String> {
+    let path = Path::new(operand);
+    match op {
+        "-e" => Ok(path.exists()),
+        "-f" => Ok(path.is_file()),
+        "-d" => Ok(path.is_dir()),
+        "-L" | "-h" => Ok(path.symlink_metadata().is_ok_and(|m| m.is_symlink())),
+        "-r" => Ok(path.exists() && is_readable(path)),
+        "-w" => Ok(path.exists() && is_writable(path)),
+        "-x" => Ok(path.exists() && is_executable(path)),
+        "-s" => Ok(path.metadata().is_ok_and(|m| m.len() > 0)),
+        "-z" => Ok(operand.is_empty()),
+        "-n" => Ok(!operand.is_empty()),
+        _ => Err(format!("unknown unary operator: {op}")),
+    }
+}
+
+fn eval_binary(left: &str, op: &str, right: &str) -> Result<bool, String> {
+    match op {
+        // String comparison
+        "=" | "==" => Ok(left == right),
+        "!=" => Ok(left != right),
+        // Numeric comparison
+        "-eq" => num_cmp(left, right, |a, b| a == b),
+        "-ne" => num_cmp(left, right, |a, b| a != b),
+        "-lt" => num_cmp(left, right, |a, b| a < b),
+        "-le" => num_cmp(left, right, |a, b| a <= b),
+        "-gt" => num_cmp(left, right, |a, b| a > b),
+        "-ge" => num_cmp(left, right, |a, b| a >= b),
+        _ => Err(format!("unknown binary operator: {op}")),
+    }
+}
+
+fn num_cmp(left: &str, right: &str, f: fn(i64, i64) -> bool) -> Result<bool, String> {
+    let a: i64 = left.parse().map_err(|_| format!("integer expression expected: {left}"))?;
+    let b: i64 = right.parse().map_err(|_| format!("integer expression expected: {right}"))?;
+    Ok(f(a, b))
+}
+
+fn is_readable(_path: &Path) -> bool {
+    // On all platforms, if we can open for reading, it's readable
+    std::fs::File::open(_path).is_ok()
+}
+
+fn is_writable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = path.metadata() {
+            let mode = meta.mode();
+            // Check user write bit
+            mode & 0o200 != 0
+        } else {
+            false
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        path.metadata().is_ok_and(|m| !m.permissions().readonly())
+    }
+}
+
+fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = path.metadata() {
+            meta.mode() & 0o111 != 0
+        } else {
+            false
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // On Windows, check if extension is in PATHEXT
+        if let Some(ext) = path.extension() {
+            let ext = format!(".{}", ext.to_string_lossy().to_uppercase());
+            let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+            pathext.split(';').any(|pe| pe.to_uppercase() == ext)
+        } else {
+            false
+        }
     }
 }
 
