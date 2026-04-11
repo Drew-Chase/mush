@@ -6,10 +6,16 @@ pub struct ShellEnv {
     pub last_exit_code: i32,
 }
 
+const MAX_SUBSTITUTION_DEPTH: u32 = 64;
+
 #[derive(Debug)]
 pub enum ExpansionError {
     /// `${VAR:?msg}` when VAR is unset or empty.
     UnsetVariable { var: String, message: String },
+    /// Command substitution failed.
+    CommandSubstitutionFailed(String),
+    /// Too many nested substitutions.
+    MaxDepthExceeded,
 }
 
 impl fmt::Display for ExpansionError {
@@ -18,33 +24,54 @@ impl fmt::Display for ExpansionError {
             ExpansionError::UnsetVariable { var, message } => {
                 write!(f, "{var}: {message}")
             }
+            ExpansionError::CommandSubstitutionFailed(msg) => {
+                write!(f, "command substitution failed: {msg}")
+            }
+            ExpansionError::MaxDepthExceeded => {
+                write!(f, "maximum command substitution nesting depth exceeded")
+            }
         }
     }
 }
 
-/// Expand all variable references and `$?` in a CommandLine AST.
+/// Expand all variable references, `$?`, `$(cmd)`, and globs in a CommandLine AST.
 /// Returns a new CommandLine with all expansions resolved to literals.
 pub fn expand(cmd_line: &CommandLine, env: &ShellEnv) -> Result<CommandLine, ExpansionError> {
+    expand_with_depth(cmd_line, env, 0)
+}
+
+fn expand_with_depth(
+    cmd_line: &CommandLine,
+    env: &ShellEnv,
+    depth: u32,
+) -> Result<CommandLine, ExpansionError> {
+    if depth > MAX_SUBSTITUTION_DEPTH {
+        return Err(ExpansionError::MaxDepthExceeded);
+    }
     let mut chains = Vec::with_capacity(cmd_line.chains.len());
     for chain in &cmd_line.chains {
-        chains.push(expand_chain(chain, env)?);
+        chains.push(expand_chain(chain, env, depth)?);
     }
     Ok(CommandLine { chains })
 }
 
-fn expand_chain(chain: &Chain, env: &ShellEnv) -> Result<Chain, ExpansionError> {
-    let first = expand_pipeline(&chain.first, env)?;
+fn expand_chain(chain: &Chain, env: &ShellEnv, depth: u32) -> Result<Chain, ExpansionError> {
+    let first = expand_pipeline(&chain.first, env, depth)?;
     let mut rest = Vec::with_capacity(chain.rest.len());
     for (op, pipeline) in &chain.rest {
-        rest.push((*op, expand_pipeline(pipeline, env)?));
+        rest.push((*op, expand_pipeline(pipeline, env, depth)?));
     }
     Ok(Chain { first, rest })
 }
 
-fn expand_pipeline(pipeline: &Pipeline, env: &ShellEnv) -> Result<Pipeline, ExpansionError> {
+fn expand_pipeline(
+    pipeline: &Pipeline,
+    env: &ShellEnv,
+    depth: u32,
+) -> Result<Pipeline, ExpansionError> {
     let mut commands = Vec::with_capacity(pipeline.commands.len());
     for cmd in &pipeline.commands {
-        commands.push(expand_simple_command(cmd, env)?);
+        commands.push(expand_simple_command(cmd, env, depth)?);
     }
     Ok(Pipeline { commands })
 }
@@ -52,10 +79,11 @@ fn expand_pipeline(pipeline: &Pipeline, env: &ShellEnv) -> Result<Pipeline, Expa
 fn expand_simple_command(
     cmd: &SimpleCommand,
     env: &ShellEnv,
+    depth: u32,
 ) -> Result<SimpleCommand, ExpansionError> {
     let mut words = Vec::new();
     for word in &cmd.words {
-        let expanded = expand_word(word, env)?;
+        let expanded = expand_word(word, env, depth)?;
         // Glob expansion: if the word has unquoted glob patterns, expand them
         let glob_expanded = expand_globs(&expanded);
         words.extend(glob_expanded);
@@ -65,7 +93,7 @@ fn expand_simple_command(
     for redir in &cmd.redirects {
         redirects.push(Redirect {
             kind: redir.kind,
-            target: expand_word(&redir.target, env)?,
+            target: expand_word(&redir.target, env, depth)?,
         });
     }
 
@@ -111,10 +139,10 @@ fn expand_globs(word: &Word) -> Vec<Word> {
     }
 }
 
-fn expand_word(word: &Word, env: &ShellEnv) -> Result<Word, ExpansionError> {
+fn expand_word(word: &Word, env: &ShellEnv, depth: u32) -> Result<Word, ExpansionError> {
     let mut new_parts = Vec::new();
     for part in &word.parts {
-        expand_word_part(part, env, &mut new_parts)?;
+        expand_word_part(part, env, depth, &mut new_parts)?;
     }
     Ok(Word { parts: new_parts })
 }
@@ -122,6 +150,7 @@ fn expand_word(word: &Word, env: &ShellEnv) -> Result<Word, ExpansionError> {
 fn expand_word_part(
     part: &WordPart,
     env: &ShellEnv,
+    depth: u32,
     out: &mut Vec<WordPart>,
 ) -> Result<(), ExpansionError> {
     match part {
@@ -136,7 +165,7 @@ fn expand_word_part(
             // Expand variables inside double quotes, but keep result as a single word
             let mut expanded_inner = Vec::new();
             for p in inner {
-                expand_word_part(p, env, &mut expanded_inner)?;
+                expand_word_part(p, env, depth, &mut expanded_inner)?;
             }
             out.push(WordPart::DoubleQuoted(expanded_inner));
         }
@@ -151,17 +180,48 @@ fn expand_word_part(
         WordPart::ExitCode => {
             out.push(WordPart::Literal(env.last_exit_code.to_string()));
         }
-        WordPart::CommandSubstitution(s) => {
-            // Command substitution expansion is handled separately (Step 6)
-            // For now, pass through as literal
-            out.push(WordPart::CommandSubstitution(s.clone()));
+        WordPart::CommandSubstitution(inner_cmd) => {
+            let result = execute_command_substitution(inner_cmd, env, depth)?;
+            out.push(WordPart::Literal(result));
         }
         WordPart::GlobPattern(s) => {
-            // Glob expansion is handled separately (Step 5)
             out.push(WordPart::GlobPattern(s.clone()));
         }
     }
     Ok(())
+}
+
+/// Execute a command substitution: parse, expand, execute, capture stdout.
+fn execute_command_substitution(
+    inner_cmd: &str,
+    env: &ShellEnv,
+    depth: u32,
+) -> Result<String, ExpansionError> {
+    if depth + 1 > MAX_SUBSTITUTION_DEPTH {
+        return Err(ExpansionError::MaxDepthExceeded);
+    }
+
+    // Parse the inner command
+    let cmd_line = super::parser::parse(inner_cmd)
+        .map_err(|e| ExpansionError::CommandSubstitutionFailed(format!("parse error: {e}")))?;
+
+    // Recursively expand
+    let expanded = expand_with_depth(&cmd_line, env, depth + 1)?;
+
+    // Execute all chains synchronously and collect output
+    let mut all_output = Vec::new();
+    for chain in &expanded.chains {
+        let result = super::pipeline::execute_chain_sync(chain);
+        all_output.extend(result.output);
+    }
+
+    // Join output lines and strip trailing newlines (bash convention)
+    let mut output = all_output.join("\n");
+    while output.ends_with('\n') || output.ends_with('\r') {
+        output.pop();
+    }
+
+    Ok(output)
 }
 
 fn resolve_variable(name: &str, _env: &ShellEnv) -> String {
@@ -316,6 +376,7 @@ mod tests {
                 assert_eq!(var, "MUSH_ERR_VAR");
                 assert_eq!(message, "not set");
             }
+            other => panic!("expected UnsetVariable, got {other:?}"),
         }
     }
 
@@ -352,6 +413,57 @@ mod tests {
     fn glob_in_single_quotes_no_expansion() {
         let words = first_words("echo '*.txt'");
         assert_eq!(words, vec!["echo", "*.txt"]);
+    }
+
+    fn ensure_config() {
+        use crate::config::Config;
+        // Initialize config if not already done (idempotent via OnceLock)
+        let _ = Config::load_or_default(
+            std::env::temp_dir().join("mush_test_config.toml"),
+        );
+    }
+
+    #[test]
+    fn command_substitution_echo() {
+        ensure_config();
+        // $(echo hello) should capture "hello"
+        let cl = expand_input("echo $(echo hello)", 0).unwrap();
+        let words: Vec<String> = cl.chains[0].first.commands[0]
+            .words
+            .iter()
+            .map(|w| w.to_plain_string())
+            .collect();
+        assert_eq!(words, vec!["echo", "hello"]);
+    }
+
+    #[test]
+    fn command_substitution_in_double_quotes() {
+        ensure_config();
+        let cl = expand_input(r#"echo "$(echo world)""#, 0).unwrap();
+        let words: Vec<String> = cl.chains[0].first.commands[0]
+            .words
+            .iter()
+            .map(|w| w.to_plain_string())
+            .collect();
+        assert_eq!(words, vec!["echo", "world"]);
+    }
+
+    #[test]
+    fn command_substitution_in_single_quotes_not_expanded() {
+        let words = first_words("echo '$(echo nope)'");
+        assert_eq!(words, vec!["echo", "$(echo nope)"]);
+    }
+
+    #[test]
+    fn command_substitution_nested() {
+        ensure_config();
+        let cl = expand_input("echo $(echo $(echo deep))", 0).unwrap();
+        let words: Vec<String> = cl.chains[0].first.commands[0]
+            .words
+            .iter()
+            .map(|w| w.to_plain_string())
+            .collect();
+        assert_eq!(words, vec!["echo", "deep"]);
     }
 
     #[test]
