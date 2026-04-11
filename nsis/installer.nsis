@@ -95,6 +95,9 @@ RequestExecutionLevel highest
 ; 5. Options (PATH, Windows Terminal, Start Menu, default shell)
 !include "ui\options.nsh"
 
+; 5b. Bun runtime option
+!include "ui\options_bun.nsh"
+
 ; 6. Install files + progress bar (also contains Section definitions)
 !include "ui\instfiles.nsh"
 
@@ -122,7 +125,6 @@ Function .onInit
     StrCpy $OptWindowsTerminal ${BST_CHECKED}
     StrCpy $OptStartMenu ${BST_CHECKED}
     StrCpy $OptSetDefaultShell ${BST_UNCHECKED}
-    StrCpy $OptInstallBun ${BST_UNCHECKED}
 FunctionEnd
 
 ; ============================================================================
