@@ -55,7 +55,10 @@ fn expand_simple_command(
 ) -> Result<SimpleCommand, ExpansionError> {
     let mut words = Vec::new();
     for word in &cmd.words {
-        words.push(expand_word(word, env)?);
+        let expanded = expand_word(word, env)?;
+        // Glob expansion: if the word has unquoted glob patterns, expand them
+        let glob_expanded = expand_globs(&expanded);
+        words.extend(glob_expanded);
     }
 
     let mut redirects = Vec::with_capacity(cmd.redirects.len());
@@ -67,6 +70,45 @@ fn expand_simple_command(
     }
 
     Ok(SimpleCommand { words, redirects })
+}
+
+/// Check if a word contains unquoted glob metacharacters.
+fn has_unquoted_globs(word: &Word) -> bool {
+    word.parts.iter().any(|p| matches!(p, WordPart::GlobPattern(_)))
+}
+
+/// Expand glob patterns in a word. If the word has unquoted glob patterns,
+/// try to match them against the filesystem. If matches are found, return
+/// one Word per match. If no matches (or no glob patterns), return the
+/// original word as-is.
+fn expand_globs(word: &Word) -> Vec<Word> {
+    if !has_unquoted_globs(word) {
+        return vec![word.clone()];
+    }
+
+    // Build the pattern string by concatenating all parts
+    let pattern = word.to_plain_string();
+
+    if pattern.is_empty() {
+        return vec![word.clone()];
+    }
+
+    match glob::glob(&pattern) {
+        Ok(paths) => {
+            let mut matches: Vec<Word> = paths
+                .filter_map(|p| p.ok())
+                .map(|p| Word::literal(&p.to_string_lossy()))
+                .collect();
+            matches.sort_by_key(|w| w.to_plain_string());
+            if matches.is_empty() {
+                // No matches — return pattern literally (bash default behavior)
+                vec![word.clone()]
+            } else {
+                matches
+            }
+        }
+        Err(_) => vec![word.clone()],
+    }
 }
 
 fn expand_word(word: &Word, env: &ShellEnv) -> Result<Word, ExpansionError> {
@@ -297,5 +339,34 @@ mod tests {
     fn unset_var_expands_empty() {
         unsafe { std::env::remove_var("MUSH_NOPE") };
         assert_eq!(first_words("echo $MUSH_NOPE"), vec!["echo", ""]);
+    }
+
+    #[test]
+    fn glob_no_match_passes_literally() {
+        // A pattern that won't match anything
+        let words = first_words("echo zzz_no_match_*.xyz");
+        assert_eq!(words, vec!["echo", "zzz_no_match_*.xyz"]);
+    }
+
+    #[test]
+    fn glob_in_single_quotes_no_expansion() {
+        let words = first_words("echo '*.txt'");
+        assert_eq!(words, vec!["echo", "*.txt"]);
+    }
+
+    #[test]
+    fn glob_matches_real_files() {
+        // This test relies on Cargo.toml existing in the current working directory
+        // which it does when tests are run from the workspace root
+        let cl = expand_input("ls Cargo.*", 0).unwrap();
+        let words: Vec<String> = cl.chains[0].first.commands[0]
+            .words
+            .iter()
+            .map(|w| w.to_plain_string())
+            .collect();
+        // Should at least have "ls" and "Cargo.toml"
+        assert!(words.len() >= 2);
+        assert_eq!(words[0], "ls");
+        assert!(words.iter().any(|w| w.contains("Cargo")));
     }
 }
