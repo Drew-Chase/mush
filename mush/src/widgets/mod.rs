@@ -961,11 +961,17 @@ impl App {
                         name: "new".into(),
                         description: Some("Create a new script from template".into()),
                         kind: help_parser::OptionKind::Subcommand,
+                        args: None,
+                        default_value: None,
+                        possible_values: None,
                     },
                     help_parser::CommandOption {
                         name: "reload".into(),
                         description: Some("Reload all scripts".into()),
                         kind: help_parser::OptionKind::Subcommand,
+                        args: None,
+                        default_value: None,
+                        possible_values: None,
                     },
                 ],
             );
@@ -993,16 +999,67 @@ impl App {
             return;
         };
 
+        // Custom help invocations for CLIs that don't use standard --help
+        const HELP_OVERRIDES: &[(&str, &[&str])] = &[
+            ("ffmpeg", &["-h", "full"]),
+            ("ffprobe", &["-h", "full"]),
+            ("ffplay", &["-h", "full"]),
+        ];
+
+        let base_cmd_lower = parts[0].to_lowercase();
+        let override_flags: Option<Vec<String>> = HELP_OVERRIDES
+            .iter()
+            .find(|(cmd, _)| *cmd == base_cmd_lower)
+            .map(|(_, flags)| flags.iter().map(|s| s.to_string()).collect());
+
         let prefix_clone = command_prefix.clone();
         let (tx, rx) = mpsc::channel::<HelpResult>();
 
         std::thread::spawn(move || {
-            let try_help = |flag: &str| -> Option<String> {
+            let wait_for_child = |child: &mut Child| -> bool {
+                let start = Instant::now();
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(_)) => return true,
+                        Ok(None) => {
+                            if start.elapsed() > Duration::from_secs(3) {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                return false;
+                            }
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        Err(_) => return false,
+                    }
+                }
+            };
+
+            let read_child_output = |child: &mut Child| -> Option<String> {
+                let mut stdout_bytes = Vec::new();
+                if let Some(mut out) = child.stdout.take() {
+                    let _ = out.read_to_end(&mut stdout_bytes);
+                }
+                let mut stderr_bytes = Vec::new();
+                if let Some(mut err) = child.stderr.take() {
+                    let _ = err.read_to_end(&mut stderr_bytes);
+                }
+
+                let bytes = if stdout_bytes.len() >= stderr_bytes.len() {
+                    stdout_bytes
+                } else {
+                    stderr_bytes
+                };
+
+                let result = decode_output(bytes);
+                if result.len() > 20 { Some(result) } else { None }
+            };
+
+            let try_help = |flags: &[&str]| -> Option<String> {
                 let mut child = match &target {
                     HelpTarget::External { path, sub_args } => {
                         std::process::Command::new(path)
                             .args(sub_args)
-                            .arg(flag)
+                            .args(flags)
                             .stdout(Stdio::piped())
                             .stderr(Stdio::piped())
                             .spawn()
@@ -1017,7 +1074,7 @@ impl App {
                         .arg("run")
                         .arg(entry_point)
                         .args(sub_args)
-                        .arg(flag)
+                        .args(flags)
                         .current_dir(script_dir)
                         .stdout(Stdio::piped())
                         .stderr(Stdio::piped())
@@ -1025,49 +1082,24 @@ impl App {
                         .ok()?,
                 };
 
-                let start = Instant::now();
-                loop {
-                    match child.try_wait() {
-                        Ok(Some(_)) => break,
-                        Ok(None) => {
-                            if start.elapsed() > Duration::from_secs(3) {
-                                let _ = child.kill();
-                                let _ = child.wait();
-                                return None;
-                            }
-                            std::thread::sleep(Duration::from_millis(50));
-                        }
-                        Err(_) => return None,
-                    }
+                if !wait_for_child(&mut child) {
+                    return None;
                 }
-
-                let mut stdout = String::new();
-                if let Some(mut out) = child.stdout.take() {
-                    let _ = out.read_to_string(&mut stdout);
-                }
-                let mut stderr = String::new();
-                if let Some(mut err) = child.stderr.take() {
-                    let _ = err.read_to_string(&mut stderr);
-                }
-
-                let result = if stdout.len() >= stderr.len() {
-                    stdout
-                } else {
-                    stderr
-                };
-
-                if result.len() > 20 {
-                    Some(result)
-                } else {
-                    None
-                }
+                read_child_output(&mut child)
             };
 
-            let raw = try_help("--help")
-                .or_else(|| try_help("-h"))
-                .or_else(|| try_help("-?"))
-                .or_else(|| try_help("?"))
-                .or_else(|| try_help("/?"));
+            let raw = if let Some(ref flags) = override_flags {
+                let flag_refs: Vec<&str> = flags.iter().map(|s| s.as_str()).collect();
+                try_help(&flag_refs)
+                    .or_else(|| try_help(&["--help"]))
+                    .or_else(|| try_help(&["-h"]))
+            } else {
+                try_help(&["--help"])
+                    .or_else(|| try_help(&["-h"]))
+                    .or_else(|| try_help(&["-?"]))
+                    .or_else(|| try_help(&["?"]))
+                    .or_else(|| try_help(&["/?"]))
+            };
 
             if let Some(raw) = raw {
                 let _ = tx.send(HelpResult {
@@ -1270,6 +1302,34 @@ fn compute_help_hash(text: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+/// Decodes raw bytes from a child process, handling UTF-16 LE output (common on Windows
+/// for tools like ffmpeg) and falling back to UTF-8.
+fn decode_output(bytes: Vec<u8>) -> String {
+    // Check for UTF-16 LE BOM
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let u16s: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        return String::from_utf16_lossy(&u16s);
+    }
+
+    // Heuristic: if a significant portion of odd-indexed bytes are null, likely UTF-16 LE
+    if bytes.len() > 8 {
+        let null_count = bytes.iter().skip(1).step_by(2).filter(|&&b| b == 0).count();
+        let total_pairs = bytes.len() / 2;
+        if total_pairs > 0 && null_count > total_pairs * 3 / 4 {
+            let u16s: Vec<u16> = bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            return String::from_utf16_lossy(&u16s);
+        }
+    }
+
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Configures a Command to produce colored output even when stdout is piped.

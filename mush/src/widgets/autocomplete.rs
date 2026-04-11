@@ -14,6 +14,7 @@ const MAX_VISIBLE: usize = 10;
 #[derive(Debug, Clone)]
 pub struct Suggestion {
     pub name: String,
+    pub display_name: Option<String>,
     pub description: Option<String>,
 }
 
@@ -49,6 +50,7 @@ impl Autocomplete {
                     Some((
                         Suggestion {
                             name: info.name,
+                            display_name: None,
                             description: info.description,
                         },
                         score,
@@ -90,10 +92,12 @@ impl Autocomplete {
         let mut matches: Vec<(Suggestion, i32)> = options
             .iter()
             .filter_map(|opt| {
+                let display_name = opt.args.as_ref().map(|a| format!("{} {a}", opt.name));
                 if partial.is_empty() {
                     Some((
                         Suggestion {
                             name: opt.name.clone(),
+                            display_name,
                             description: opt.description.clone(),
                         },
                         if opt.kind == OptionKind::Subcommand {
@@ -108,6 +112,7 @@ impl Autocomplete {
                         Some((
                             Suggestion {
                                 name: opt.name.clone(),
+                                display_name,
                                 description: opt.description.clone(),
                             },
                             score,
@@ -171,6 +176,7 @@ impl Autocomplete {
 
             let suggestion = Suggestion {
                 name: display_name,
+                display_name: None,
                 description: desc,
             };
             if is_dir {
@@ -284,8 +290,13 @@ impl Widget for &Autocomplete {
                     Color::Reset
                 };
 
+                let visible_name = suggestion
+                    .display_name
+                    .as_deref()
+                    .unwrap_or(&suggestion.name);
+
                 let line = if let Some(desc) = &suggestion.description {
-                    let name_len = suggestion.name.len();
+                    let name_len = visible_name.len();
                     let sep = "  ";
                     let available = inner_width.saturating_sub(name_len + sep.len());
                     let truncated = if desc.len() > available && available > 3 {
@@ -298,7 +309,7 @@ impl Widget for &Autocomplete {
 
                     Line::from(vec![
                         Span::styled(
-                            &suggestion.name,
+                            visible_name,
                             Style::default().fg(Color::White).bg(bg),
                         ),
                         Span::styled(sep, Style::default().bg(bg)),
@@ -306,7 +317,7 @@ impl Widget for &Autocomplete {
                     ])
                 } else {
                     Line::styled(
-                        suggestion.name.as_str(),
+                        visible_name,
                         Style::default().fg(Color::White).bg(bg),
                     )
                 };
