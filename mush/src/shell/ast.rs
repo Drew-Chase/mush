@@ -16,6 +16,8 @@ pub struct CommandLine {
 pub struct Chain {
     pub first: Pipeline,
     pub rest: Vec<(ChainOp, Pipeline)>,
+    /// If true, the chain runs in the background (`&` suffix).
+    pub background: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,4 +146,8 @@ pub enum RedirectKind {
     StderrAppend,
     /// `2>&1`
     StderrToStdout,
+    /// `<<<`
+    HereString,
+    /// `<< DELIMITER`
+    HereDoc,
 }

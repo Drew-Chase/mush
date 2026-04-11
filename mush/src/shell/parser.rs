@@ -38,6 +38,9 @@ enum Token {
     StderrOut,      // 2>
     StderrAppend,   // 2>>
     StderrToStdout, // 2>&1
+    HereString,     // <<<
+    HereDoc,        // <<
+    Background,     // &
     Semicolon,      // ;
 }
 
@@ -100,8 +103,7 @@ impl<'a> Lexer<'a> {
                     self.chars.next();
                     Ok(Token::And)
                 } else {
-                    // Lone '&' — treat as literal for now
-                    Ok(Token::Word(Word::literal("&")))
+                    Ok(Token::Background)
                 }
             }
             '>' => {
@@ -115,7 +117,17 @@ impl<'a> Lexer<'a> {
             }
             '<' => {
                 self.chars.next();
-                Ok(Token::RedirectIn)
+                if self.chars.peek() == Some(&'<') {
+                    self.chars.next(); // consume second <
+                    if self.chars.peek() == Some(&'<') {
+                        self.chars.next(); // consume third <
+                        Ok(Token::HereString)
+                    } else {
+                        Ok(Token::HereDoc)
+                    }
+                } else {
+                    Ok(Token::RedirectIn)
+                }
             }
             '2' => {
                 // Peek ahead for 2>, 2>>, 2>&1
@@ -547,22 +559,33 @@ impl<'a> Parser<'a> {
         let mut chains = Vec::new();
 
         // Skip leading semicolons
-        while self.peek() == Some(&Token::Semicolon) {
+        while matches!(self.peek(), Some(Token::Semicolon | Token::Background)) {
             self.advance();
         }
 
         if self.peek().is_some() {
-            chains.push(self.parse_chain()?);
+            let mut chain = self.parse_chain()?;
+            // Check for trailing & (background)
+            if self.peek() == Some(&Token::Background) {
+                chain.background = true;
+                self.advance();
+            }
+            chains.push(chain);
         }
 
-        while self.peek() == Some(&Token::Semicolon) {
+        while matches!(self.peek(), Some(Token::Semicolon | Token::Background)) {
             self.advance();
-            // Skip consecutive semicolons
-            while self.peek() == Some(&Token::Semicolon) {
+            // Skip consecutive separators
+            while matches!(self.peek(), Some(Token::Semicolon | Token::Background)) {
                 self.advance();
             }
             if self.peek().is_some() {
-                chains.push(self.parse_chain()?);
+                let mut chain = self.parse_chain()?;
+                if self.peek() == Some(&Token::Background) {
+                    chain.background = true;
+                    self.advance();
+                }
+                chains.push(chain);
             }
         }
 
@@ -584,7 +607,11 @@ impl<'a> Parser<'a> {
             rest.push((op, pipeline));
         }
 
-        Ok(Chain { first, rest })
+        Ok(Chain {
+            first,
+            rest,
+            background: false,
+        })
     }
 
     fn parse_pipeline(&mut self) -> Result<Pipeline, ParseError> {
@@ -615,7 +642,9 @@ impl<'a> Parser<'a> {
                     | Token::RedirectAppend
                     | Token::RedirectIn
                     | Token::StderrOut
-                    | Token::StderrAppend,
+                    | Token::StderrAppend
+                    | Token::HereString
+                    | Token::HereDoc,
                 ) => {
                     let kind = match self.advance() {
                         Some(Token::RedirectOut) => RedirectKind::StdoutOverwrite,
@@ -623,9 +652,11 @@ impl<'a> Parser<'a> {
                         Some(Token::RedirectIn) => RedirectKind::StdinRead,
                         Some(Token::StderrOut) => RedirectKind::StderrOverwrite,
                         Some(Token::StderrAppend) => RedirectKind::StderrAppend,
+                        Some(Token::HereString) => RedirectKind::HereString,
+                        Some(Token::HereDoc) => RedirectKind::HereDoc,
                         _ => unreachable!(),
                     };
-                    // Next token must be a word (the target file)
+                    // Next token must be a word (the string/delimiter)
                     match self.advance() {
                         Some(Token::Word(w)) => {
                             redirects.push(Redirect {
@@ -858,6 +889,45 @@ mod tests {
             first_command_words(r"cd my\ directory"),
             vec!["cd", "my directory"]
         );
+    }
+
+    #[test]
+    fn background_execution() {
+        let cl = parse_ok("sleep 60 &");
+        assert_eq!(cl.chains.len(), 1);
+        assert!(cl.chains[0].background);
+    }
+
+    #[test]
+    fn background_with_foreground() {
+        let cl = parse_ok("sleep 60 &; echo done");
+        assert_eq!(cl.chains.len(), 2);
+        assert!(cl.chains[0].background);
+        assert!(!cl.chains[1].background);
+    }
+
+    #[test]
+    fn foreground_not_background() {
+        let cl = parse_ok("echo hello");
+        assert!(!cl.chains[0].background);
+    }
+
+    #[test]
+    fn here_string() {
+        let cl = parse_ok(r#"grep "world" <<< "hello world""#);
+        let cmd = &cl.chains[0].first.commands[0];
+        assert_eq!(cmd.redirects.len(), 1);
+        assert_eq!(cmd.redirects[0].kind, RedirectKind::HereString);
+        assert_eq!(cmd.redirects[0].target.to_plain_string(), "hello world");
+    }
+
+    #[test]
+    fn here_doc() {
+        let cl = parse_ok("cat << EOF");
+        let cmd = &cl.chains[0].first.commands[0];
+        assert_eq!(cmd.redirects.len(), 1);
+        assert_eq!(cmd.redirects[0].kind, RedirectKind::HereDoc);
+        assert_eq!(cmd.redirects[0].target.to_plain_string(), "EOF");
     }
 
     #[test]

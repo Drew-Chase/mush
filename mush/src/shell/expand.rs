@@ -61,7 +61,11 @@ fn expand_chain(chain: &Chain, env: &ShellEnv, depth: u32) -> Result<Chain, Expa
     for (op, pipeline) in &chain.rest {
         rest.push((*op, expand_pipeline(pipeline, env, depth)?));
     }
-    Ok(Chain { first, rest })
+    Ok(Chain {
+        first,
+        rest,
+        background: chain.background,
+    })
 }
 
 fn expand_pipeline(

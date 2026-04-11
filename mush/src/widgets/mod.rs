@@ -60,6 +60,14 @@ struct PendingHelpLookup {
 
 const MAX_PENDING_LOOKUPS: usize = 3;
 
+struct BackgroundJob {
+    job_id: u32,
+    command: String,
+    children: Vec<Child>,
+    last_child: Child,
+    start: Instant,
+}
+
 pub struct App {
     pub history: CommandHistory,
     pub input: CommandInput,
@@ -71,6 +79,8 @@ pub struct App {
     last_history_area: Rect,
     running_pipeline: Option<RunningPipeline>,
     last_exit_code: i32,
+    background_jobs: Vec<BackgroundJob>,
+    next_job_id: u32,
     needs_clear: bool,
     help_cache: HashMap<String, Vec<CommandOption>>,
     pending_help_lookups: Vec<PendingHelpLookup>,
@@ -90,6 +100,14 @@ impl Drop for App {
             }
             let _ = running.last_child.kill();
             let _ = running.last_child.wait();
+        }
+        for mut job in self.background_jobs.drain(..) {
+            for mut c in job.children.drain(..) {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            let _ = job.last_child.kill();
+            let _ = job.last_child.wait();
         }
     }
 }
@@ -185,6 +203,8 @@ impl App {
             last_history_area: Rect::default(),
             running_pipeline: None,
             last_exit_code: 0,
+            background_jobs: Vec::new(),
+            next_job_id: 1,
             needs_clear: false,
             help_cache,
             pending_help_lookups: Vec::new(),
@@ -216,13 +236,15 @@ impl App {
 
             self.drain_script_watcher();
             self.drain_config_watcher();
+            self.drain_background_jobs();
             self.drain_path_scan();
 
             terminal.draw(|frame| self.draw(frame))?;
 
             let needs_poll = self.running_pipeline.is_some()
                 || !self.pending_help_lookups.is_empty()
-                || self.pending_path_scan.is_some();
+                || self.pending_path_scan.is_some()
+                || !self.background_jobs.is_empty();
             if needs_poll {
                 if event::poll(Duration::from_millis(16))? {
                     self.handle_events()?;
@@ -507,6 +529,11 @@ impl App {
         command_display: &str,
         cwd: &str,
     ) {
+        if chain.background {
+            self.execute_chain_background(chain, command_display, cwd);
+            return;
+        }
+
         self.execute_pipeline_in_chain(&chain.first, command_display, cwd);
 
         for (op, pipeline) in &chain.rest {
@@ -523,6 +550,76 @@ impl App {
             };
             if should_run {
                 self.execute_pipeline_in_chain(pipeline, command_display, cwd);
+            }
+        }
+    }
+
+    fn execute_chain_background(
+        &mut self,
+        chain: &shell::ast::Chain,
+        command_display: &str,
+        cwd: &str,
+    ) {
+        let start = Instant::now();
+
+        // For background execution, use the pipeline executor but capture the
+        // streaming spawn instead of streaming to TUI.
+        match shell::pipeline::execute_pipeline(&chain.first) {
+            shell::pipeline::PipelineResult::Streaming(spawn) => {
+                let job_id = self.next_job_id;
+                self.next_job_id += 1;
+
+                #[cfg(unix)]
+                let pid = {
+                    use std::os::unix::process::CommandExt;
+                    spawn.last_child.id()
+                };
+                #[cfg(not(unix))]
+                let pid = spawn.last_child.id();
+
+                self.history.add_entry(CommandEntry {
+                    command: command_display.to_string(),
+                    output: vec![format!("[{job_id}] {pid}")],
+                    duration: Duration::ZERO,
+                    exit_code: 0,
+                });
+
+                self.background_jobs.push(BackgroundJob {
+                    job_id,
+                    command: command_display.to_string(),
+                    children: spawn.children,
+                    last_child: spawn.last_child,
+                    start,
+                });
+
+                self.last_exit_code = 0;
+            }
+            shell::pipeline::PipelineResult::Sync(result) => {
+                // If the command ran synchronously (builtin, etc.), just show output
+                let duration = start.elapsed();
+                self.last_exit_code = result.exit_code;
+                let _ = self.db.insert(
+                    command_display,
+                    result.exit_code,
+                    duration.as_millis() as i64,
+                    Some(cwd),
+                );
+                if !result.output.is_empty() || result.exit_code != 0 {
+                    self.history.add_entry(CommandEntry {
+                        command: command_display.to_string(),
+                        output: result.output,
+                        duration,
+                        exit_code: result.exit_code,
+                    });
+                }
+                if result.exit_app {
+                    self.exit = true;
+                }
+            }
+            shell::pipeline::PipelineResult::Interactive { path, args } => {
+                // Can't run interactive commands in background
+                let result = self.run_interactive(&path, &args);
+                self.last_exit_code = result.exit_code;
             }
         }
     }
@@ -653,6 +750,15 @@ impl App {
         command_display: &str,
         mut spawn: shell::pipeline::StreamingSpawn,
     ) {
+        // Write here-string/here-doc data to stdin if present
+        if let Some(data) = spawn.stdin_data.take()
+            && let Some(mut stdin) = spawn.last_child.stdin.take()
+        {
+            use std::io::Write;
+            let _ = stdin.write_all(&data);
+            // Drop stdin to signal EOF
+        }
+
         let (tx, rx) = mpsc::channel::<OutputChunk>();
 
         if let Some(stdout) = spawn.last_child.stdout.take() {
@@ -1135,6 +1241,47 @@ impl App {
             let scripts_dir = crate::get_appdata_path().join("scripts");
             shell::script_registry::scan_scripts(&scripts_dir);
             self.input.notify("Scripts reloaded".to_string());
+        }
+    }
+
+    fn drain_background_jobs(&mut self) {
+        let mut i = 0;
+        while i < self.background_jobs.len() {
+            match self.background_jobs[i].last_child.try_wait() {
+                Ok(Some(status)) => {
+                    let mut job = self.background_jobs.remove(i);
+                    for mut c in job.children.drain(..) {
+                        let _ = c.wait();
+                    }
+                    let exit_code = status.code().unwrap_or(-1);
+                    let duration = job.start.elapsed();
+                    let _ = self.db.insert(
+                        &job.command,
+                        exit_code,
+                        duration.as_millis() as i64,
+                        Some(&self.input.cwd),
+                    );
+                    let status_text = if exit_code == 0 { "Done" } else { "Exit" };
+                    self.history.add_entry(CommandEntry {
+                        command: format!("[{}] {} {}", job.job_id, status_text, job.command),
+                        output: if exit_code != 0 {
+                            vec![format!("exit code: {exit_code}")]
+                        } else {
+                            Vec::new()
+                        },
+                        duration,
+                        exit_code,
+                    });
+                    self.history.scroll_to_bottom();
+                    // Don't increment i since we removed the element
+                }
+                Ok(None) => {
+                    i += 1; // Still running
+                }
+                Err(_) => {
+                    self.background_jobs.remove(i);
+                }
+            }
         }
     }
 
