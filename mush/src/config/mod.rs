@@ -7,9 +7,9 @@ use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock, RwLockReadGuard};
 
-static CONFIG: OnceLock<Config> = OnceLock::new();
+static CONFIG: OnceLock<RwLock<Config>> = OnceLock::new();
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct Config {
@@ -28,12 +28,14 @@ impl fmt::Display for Config {
 }
 
 impl Config {
-    /// Returns a reference to the global config.
+    /// Returns a read guard to the global config.
     /// Panics if `load_or_default` has not been called.
-    pub fn get() -> &'static Config {
+    pub fn get() -> RwLockReadGuard<'static, Config> {
         CONFIG
             .get()
             .expect("Config not initialized — call Config::load_or_default() first")
+            .read()
+            .expect("Config RwLock poisoned")
     }
 
     /// Loads config from `path` if it exists, otherwise uses defaults.
@@ -48,8 +50,39 @@ impl Config {
         };
         config._save_path = Some(path);
         CONFIG
-            .set(config)
+            .set(RwLock::new(config))
             .map_err(|_| eyre!("Config already initialized"))?;
+        Ok(())
+    }
+
+    /// Re-reads config from disk and replaces the current in-memory config.
+    /// On parse failure the old config is kept and an error is returned.
+    pub fn reload() -> Result<()> {
+        let lock = CONFIG
+            .get()
+            .ok_or_else(|| eyre!("Config not initialized"))?;
+
+        // Read path from current config (short read lock)
+        let path = {
+            let current = lock.read().map_err(|_| eyre!("Config RwLock poisoned"))?;
+            current
+                ._save_path
+                .clone()
+                .ok_or_else(|| eyre!("No config path set"))?
+        };
+
+        // Parse new config from disk (no lock held during I/O)
+        let mut new_config = if path.exists() {
+            let content = std::fs::read_to_string(&path)?;
+            toml::from_str::<Config>(&content)?
+        } else {
+            Config::default()
+        };
+        new_config._save_path = Some(path);
+
+        // Swap in the new config
+        let mut writer = lock.write().map_err(|_| eyre!("Config RwLock poisoned"))?;
+        *writer = new_config;
         Ok(())
     }
 

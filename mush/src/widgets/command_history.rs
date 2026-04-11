@@ -45,7 +45,7 @@ impl CommandEntry {
             return;
         }
 
-        render_output_lines(&self.output, config, inner, buf);
+        render_output_lines(&self.output, &config, inner, buf);
     }
 }
 
@@ -86,7 +86,7 @@ impl LiveRenderData {
             return;
         }
 
-        render_output_lines(&self.lines, config, inner, buf);
+        render_output_lines(&self.lines, &config, inner, buf);
     }
 }
 

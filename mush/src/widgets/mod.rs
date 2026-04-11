@@ -68,6 +68,7 @@ pub struct App {
     pending_help_lookups: Vec<PendingHelpLookup>,
     last_help_prefix: Option<String>,
     script_watcher_rx: Receiver<()>,
+    config_watcher_rx: Receiver<()>,
 }
 
 impl Drop for App {
@@ -133,6 +134,32 @@ impl App {
             }
         });
 
+        // Spawn filesystem watcher for the config file
+        let (config_tx, config_watcher_rx) = mpsc::channel();
+        let config_dir = crate::get_appdata_path();
+        std::thread::spawn(move || {
+            use notify::{EventKind, RecursiveMode, Watcher, recommended_watcher};
+            let tx = config_tx;
+            let mut watcher = match recommended_watcher(move |res: Result<notify::Event, _>| {
+                if let Ok(event) = res
+                    && matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
+                    && event.paths.iter().any(|p| {
+                        p.file_name()
+                            .is_some_and(|name| name == "config.toml")
+                    })
+                {
+                    let _ = tx.send(());
+                }
+            }) {
+                Ok(w) => w,
+                Err(_) => return,
+            };
+            let _ = watcher.watch(&config_dir, RecursiveMode::NonRecursive);
+            loop {
+                std::thread::park();
+            }
+        });
+
         Ok(Self {
             history,
             input: CommandInput::default(),
@@ -147,6 +174,7 @@ impl App {
             pending_help_lookups: Vec::new(),
             last_help_prefix: None,
             script_watcher_rx,
+            config_watcher_rx,
         })
     }
 
@@ -168,6 +196,7 @@ impl App {
             }
 
             self.drain_script_watcher();
+            self.drain_config_watcher();
 
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -1069,6 +1098,19 @@ impl App {
             let scripts_dir = crate::get_appdata_path().join("scripts");
             shell::script_registry::scan_scripts(&scripts_dir);
             self.input.notify("Scripts reloaded".to_string());
+        }
+    }
+
+    fn drain_config_watcher(&mut self) {
+        let mut changed = false;
+        while self.config_watcher_rx.try_recv().is_ok() {
+            changed = true;
+        }
+        if changed {
+            match Config::reload() {
+                Ok(()) => self.input.notify("Config reloaded".to_string()),
+                Err(e) => self.input.notify(format!("Config reload failed: {e}")),
+            }
         }
     }
 
