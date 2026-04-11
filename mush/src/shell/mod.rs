@@ -1,5 +1,7 @@
+pub mod ast;
 pub mod builtins;
 pub mod help_parser;
+pub mod parser;
 pub mod path_resolver;
 pub mod script_registry;
 
