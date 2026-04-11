@@ -169,9 +169,11 @@ impl Widget for &CommandInput {
         }
 
         if self.buffer.is_empty() {
-            let placeholder = Paragraph::new("Command...")
-                .style(Style::default().fg(Color::DarkGray));
-            placeholder.render(inner, buf);
+            let line = Line::from(vec![
+                Span::styled(" ", Style::default().bg(Color::White).fg(Color::Black)),
+                Span::styled("Command...", Style::default().fg(Color::DarkGray)),
+            ]);
+            Paragraph::new(line).render(inner, buf);
         } else {
             let text_color = if self.valid_command {
                 Color::White
