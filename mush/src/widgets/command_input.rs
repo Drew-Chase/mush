@@ -12,6 +12,7 @@ pub struct CommandInput {
     pub cwd: String,
     pub valid_command: bool,
     pub notification: Option<(String, Instant)>,
+    pub interactive_mode: bool,
 }
 
 impl Default for CommandInput {
@@ -25,6 +26,7 @@ impl Default for CommandInput {
             cwd,
             valid_command: true,
             notification: None,
+            interactive_mode: false,
         }
     }
 }
@@ -117,7 +119,12 @@ impl Widget for &CommandInput {
         // Build CWD title with last segment highlighted
         let cwd_title = cwd_to_title(&self.cwd);
 
-        let hints = Line::from(vec![
+        let mut hint_spans = Vec::new();
+        if self.interactive_mode {
+            hint_spans.push(Span::styled(" [INTERACTIVE] ", Style::default().fg(Color::Yellow)));
+            hint_spans.push(Span::styled("| ", Style::default().fg(Color::DarkGray)));
+        }
+        hint_spans.extend([
             Span::styled(" Enter ", Style::default().fg(Color::DarkGray)),
             Span::styled("Send", Style::default().fg(Color::DarkGray)),
             Span::styled(" | ", Style::default().fg(Color::DarkGray)),
@@ -127,7 +134,8 @@ impl Widget for &CommandInput {
             Span::styled("Ctrl+\u{2191}/\u{2193} ", Style::default().fg(Color::DarkGray)),
             Span::styled("Scroll", Style::default().fg(Color::DarkGray)),
             Span::raw(" "),
-        ]).alignment(ratatui::layout::Alignment::Right);
+        ]);
+        let hints = Line::from(hint_spans).alignment(ratatui::layout::Alignment::Right);
 
         // Build notification title (top-right) if active and not expired
         let notification_title = self

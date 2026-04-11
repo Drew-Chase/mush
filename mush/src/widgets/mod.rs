@@ -1,7 +1,7 @@
 use ratatui::crossterm::event::{
     self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
 };
-use ratatui::crossterm::{execute, event::{EnableMouseCapture, DisableMouseCapture}};
+use ratatui::crossterm::{execute, event::{EnableMouseCapture, DisableMouseCapture, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags}};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::HashMap;
@@ -89,6 +89,7 @@ pub struct App {
     config_watcher_rx: Receiver<()>,
     pending_path_scan: Option<Receiver<Vec<String>>>,
     last_path_scan: Option<Instant>,
+    interactive_mode: bool,
 }
 
 impl Drop for App {
@@ -215,11 +216,16 @@ impl App {
             config_watcher_rx,
             pending_path_scan: None,
             last_path_scan: None,
+            interactive_mode: false,
         })
     }
 
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
         execute!(std::io::stdout(), EnableMouseCapture)?;
+        let _ = execute!(
+            std::io::stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
         self.history.scroll_to_bottom();
 
         while !self.exit {
@@ -256,6 +262,7 @@ impl App {
             }
         }
 
+        let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
         execute!(std::io::stdout(), DisableMouseCapture)?;
         Ok(())
     }
@@ -342,6 +349,18 @@ impl App {
                         self.history_popover.close();
                         self.history_nav.reset();
                         self.validate_input();
+                    }
+
+                    // Ctrl+I toggles interactive mode
+                    (KeyModifiers::CONTROL, KeyCode::Char('i')) => {
+                        self.interactive_mode = !self.interactive_mode;
+                        self.input.interactive_mode = self.interactive_mode;
+                        let msg = if self.interactive_mode {
+                            "Interactive mode ON"
+                        } else {
+                            "Interactive mode OFF"
+                        };
+                        self.input.notify(msg.to_string());
                     }
 
                     // Ctrl+R toggles history popover
@@ -572,7 +591,7 @@ impl App {
 
         // For background execution, use the pipeline executor but capture the
         // streaming spawn instead of streaming to TUI.
-        match shell::pipeline::execute_pipeline(&chain.first) {
+        match shell::pipeline::execute_pipeline(&chain.first, false) {
             shell::pipeline::PipelineResult::Streaming(spawn) => {
                 let job_id = self.next_job_id;
                 self.next_job_id += 1;
@@ -656,7 +675,7 @@ impl App {
             }
         }
 
-        match shell::pipeline::execute_pipeline(pipeline) {
+        match shell::pipeline::execute_pipeline(pipeline, self.interactive_mode) {
             shell::pipeline::PipelineResult::Sync(result) => {
                 let duration = start.elapsed();
                 self.last_exit_code = result.exit_code;

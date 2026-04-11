@@ -723,7 +723,7 @@ fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
 
 /// Try to execute a pipeline, potentially spawning streaming (async) processes.
 /// Returns `PipelineResult` indicating how the pipeline should be handled by the TUI.
-pub fn execute_pipeline(pipeline: &Pipeline) -> PipelineResult {
+pub fn execute_pipeline(pipeline: &Pipeline, force_interactive: bool) -> PipelineResult {
     // Subshell: always synchronous
     if let Some(ref inner) = pipeline.subshell {
         return PipelineResult::Sync(execute_subshell_sync(inner));
@@ -737,7 +737,7 @@ pub fn execute_pipeline(pipeline: &Pipeline) -> PipelineResult {
         match &kind {
             CommandKind::External(path) => {
                 let words: Vec<String> = cmd.words.iter().map(|w| w.to_plain_string()).collect();
-                if super::is_interactive(&words[0], &args) {
+                if force_interactive || super::is_interactive(&words[0], &args) {
                     return PipelineResult::Interactive {
                         path: path.clone(),
                         args,
@@ -806,6 +806,18 @@ pub fn execute_pipeline(pipeline: &Pipeline) -> PipelineResult {
                         });
                     }
                 };
+
+                if force_interactive {
+                    let mut script_args = vec![
+                        "run".to_string(),
+                        entry.entry_point.to_string_lossy().to_string(),
+                    ];
+                    script_args.extend(args);
+                    return PipelineResult::Interactive {
+                        path: bun_path,
+                        args: script_args,
+                    };
+                }
 
                 let mut proc = Command::new(&bun_path);
                 super::super::widgets::force_color_env(
