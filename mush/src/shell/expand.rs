@@ -73,11 +73,22 @@ fn expand_pipeline(
     env: &ShellEnv,
     depth: u32,
 ) -> Result<Pipeline, ExpansionError> {
+    if let Some(ref inner) = pipeline.subshell {
+        let expanded_inner = expand_with_depth(inner, env, depth)?;
+        return Ok(Pipeline {
+            commands: Vec::new(),
+            subshell: Some(Box::new(expanded_inner)),
+        });
+    }
+
     let mut commands = Vec::with_capacity(pipeline.commands.len());
     for cmd in &pipeline.commands {
         commands.push(expand_simple_command(cmd, env, depth)?);
     }
-    Ok(Pipeline { commands })
+    Ok(Pipeline {
+        commands,
+        subshell: None,
+    })
 }
 
 fn expand_simple_command(

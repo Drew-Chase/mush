@@ -633,7 +633,7 @@ impl App {
         let start = Instant::now();
 
         // Check for clear builtin as a special case (needs to clear history widget)
-        if pipeline.commands.len() == 1 {
+        if pipeline.subshell.is_none() && pipeline.commands.len() == 1 {
             let first_word = pipeline.commands[0]
                 .words
                 .first()

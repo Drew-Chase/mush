@@ -27,9 +27,12 @@ pub enum ChainOp {
 }
 
 /// One or more simple commands connected by `|`.
+/// If `subshell` is `Some`, the commands vec is empty and the inner
+/// CommandLine is executed in an isolated environment instead.
 #[derive(Debug, Clone)]
 pub struct Pipeline {
     pub commands: Vec<SimpleCommand>,
+    pub subshell: Option<Box<CommandLine>>,
 }
 
 /// A single command with arguments and I/O redirections.

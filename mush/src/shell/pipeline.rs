@@ -464,8 +464,68 @@ pub fn execute_chain_sync(chain: &Chain) -> SyncExecResult {
     result
 }
 
+/// Execute a subshell synchronously with env isolation.
+fn execute_subshell_sync(inner: &super::ast::CommandLine) -> SyncExecResult {
+    // Save current directory
+    let saved_cwd = std::env::current_dir().ok();
+    // Save current environment
+    let saved_env: Vec<(String, String)> = std::env::vars().collect();
+
+    // Execute inner command line
+    let mut all_output = Vec::new();
+    let mut exit_code = 0;
+    let mut exit_app = false;
+    for chain in &inner.chains {
+        let result = execute_chain_sync(chain);
+        all_output.extend(result.output);
+        exit_code = result.exit_code;
+        if result.exit_app {
+            exit_app = true;
+            break;
+        }
+    }
+
+    // Restore environment: remove any new vars, restore old values
+    let current_env: std::collections::HashSet<String> =
+        std::env::vars().map(|(k, _)| k).collect();
+    let saved_keys: std::collections::HashSet<String> =
+        saved_env.iter().map(|(k, _)| k.clone()).collect();
+
+    // Remove vars that were added in the subshell
+    for key in &current_env {
+        if !saved_keys.contains(key) {
+            // SAFETY: mush is single-threaded for command execution
+            unsafe { std::env::remove_var(key) };
+        }
+    }
+    // Restore vars that may have been changed
+    for (key, value) in &saved_env {
+        if std::env::var(key).ok().as_ref() != Some(value) {
+            // SAFETY: mush is single-threaded for command execution
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
+
+    // Restore working directory
+    if let Some(cwd) = saved_cwd {
+        let _ = std::env::set_current_dir(cwd);
+    }
+
+    SyncExecResult {
+        output: all_output,
+        exit_code,
+        exit_app,
+        change_dir: false,
+    }
+}
+
 /// Execute a pipeline synchronously.
 fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
+    // Handle subshell pipelines
+    if let Some(ref inner) = pipeline.subshell {
+        return execute_subshell_sync(inner);
+    }
+
     if pipeline.commands.len() == 1 {
         return execute_simple_sync(&pipeline.commands[0]);
     }
@@ -664,6 +724,11 @@ fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
 /// Try to execute a pipeline, potentially spawning streaming (async) processes.
 /// Returns `PipelineResult` indicating how the pipeline should be handled by the TUI.
 pub fn execute_pipeline(pipeline: &Pipeline) -> PipelineResult {
+    // Subshell: always synchronous
+    if let Some(ref inner) = pipeline.subshell {
+        return PipelineResult::Sync(execute_subshell_sync(inner));
+    }
+
     // Single command — check if it's a builtin, interactive, or streamable external
     if pipeline.commands.len() == 1 {
         let cmd = &pipeline.commands[0];
