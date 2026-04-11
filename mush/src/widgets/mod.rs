@@ -695,6 +695,10 @@ impl App {
                         self.execute_bg_builtin(&cmd_args, command_display, start);
                         return;
                     }
+                    "wait" => {
+                        self.execute_wait_builtin(&cmd_args, command_display, start);
+                        return;
+                    }
                     _ => {}
                 }
             }
@@ -861,6 +865,63 @@ impl App {
             output,
             duration,
             exit_code: self.last_exit_code,
+        });
+    }
+
+    fn execute_wait_builtin(&mut self, args: &[String], command_display: &str, start: Instant) {
+        let mut output = Vec::new();
+        let mut last_exit_code = 0;
+
+        if args.is_empty() {
+            // Wait for all background jobs
+            while let Some(mut job) = self.background_jobs.pop() {
+                let exit_code = match job.last_child.wait() {
+                    Ok(status) => status.code().unwrap_or(-1),
+                    Err(_) => -1,
+                };
+                for mut c in job.children.drain(..) {
+                    let _ = c.wait();
+                }
+                let status_text = if exit_code == 0 { "Done" } else { "Exit" };
+                output.push(format!("[{}] {}  {}", job.job_id, status_text, job.command));
+                last_exit_code = exit_code;
+            }
+        } else {
+            // Wait for specific jobs
+            for spec in args {
+                let s = spec.strip_prefix('%').unwrap_or(spec);
+                if let Ok(id) = s.parse::<u32>() {
+                    if let Some(idx) = self.background_jobs.iter().position(|j| j.job_id == id) {
+                        let mut job = self.background_jobs.remove(idx);
+                        let exit_code = match job.last_child.wait() {
+                            Ok(status) => status.code().unwrap_or(-1),
+                            Err(_) => -1,
+                        };
+                        for mut c in job.children.drain(..) {
+                            let _ = c.wait();
+                        }
+                        let status_text = if exit_code == 0 { "Done" } else { "Exit" };
+                        output.push(format!("[{}] {}  {}", job.job_id, status_text, job.command));
+                        last_exit_code = exit_code;
+                    } else {
+                        output.push(format!("wait: %{id}: no such job"));
+                        last_exit_code = 127;
+                    }
+                }
+            }
+        }
+
+        if output.is_empty() {
+            output.push("No background jobs to wait for.".to_string());
+        }
+
+        self.last_exit_code = last_exit_code;
+        let duration = start.elapsed();
+        self.history.add_entry(CommandEntry {
+            command: command_display.to_string(),
+            output,
+            duration,
+            exit_code: last_exit_code,
         });
     }
 

@@ -32,6 +32,10 @@ pub enum BuiltinCommand {
     Jobs,
     Fg,
     Bg,
+    Dirs,
+    Wait,
+    Expr,
+    Umask,
 }
 
 pub struct BuiltinResult {
@@ -68,6 +72,10 @@ pub fn lookup(name: &str) -> Option<BuiltinCommand> {
         "jobs" => Some(BuiltinCommand::Jobs),
         "fg" => Some(BuiltinCommand::Fg),
         "bg" => Some(BuiltinCommand::Bg),
+        "dirs" => Some(BuiltinCommand::Dirs),
+        "wait" => Some(BuiltinCommand::Wait),
+        "expr" => Some(BuiltinCommand::Expr),
+        "umask" => Some(BuiltinCommand::Umask),
         _ => None,
     }
 }
@@ -106,9 +114,13 @@ pub fn execute(cmd: BuiltinCommand, args: &[String]) -> BuiltinResult {
         BuiltinCommand::Pushd => execute_pushd(args),
         BuiltinCommand::Popd => execute_popd(args),
         BuiltinCommand::Set => execute_set(args),
-        // Jobs/fg/bg are handled as special cases in widgets/mod.rs
-        // These stubs are unreachable in practice
-        BuiltinCommand::Jobs | BuiltinCommand::Fg | BuiltinCommand::Bg => ok(Vec::new()),
+        // Jobs/fg/bg/wait are handled as special cases in widgets/mod.rs
+        BuiltinCommand::Jobs | BuiltinCommand::Fg | BuiltinCommand::Bg | BuiltinCommand::Wait => {
+            ok(Vec::new())
+        }
+        BuiltinCommand::Dirs => execute_dirs(args),
+        BuiltinCommand::Expr => execute_expr(args),
+        BuiltinCommand::Umask => execute_umask(args),
     }
 }
 
@@ -1248,6 +1260,376 @@ fn execute_set(args: &[String]) -> BuiltinResult {
     }
 
     ok(output)
+}
+
+// ── dirs ────────────────────────────────────────────────────────────────────
+
+fn execute_dirs(args: &[String]) -> BuiltinResult {
+    let clear = args.iter().any(|a| a == "-c" || a == "--clear");
+    let verbose = args.iter().any(|a| a == "-v");
+    let long = args.iter().any(|a| a == "-l" || a == "--long");
+    let per_line = args.iter().any(|a| a == "-p") || verbose;
+
+    if clear {
+        DIR_STACK.lock().unwrap().clear();
+        return ok(Vec::new());
+    }
+
+    let stack = DIR_STACK.lock().unwrap();
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let home = home_dir();
+
+    let abbreviate = |p: &Path| -> String {
+        if long {
+            return p.to_string_lossy().to_string();
+        }
+        if let Some(ref h) = home
+            && let Ok(rest) = p.strip_prefix(h)
+        {
+            if rest.as_os_str().is_empty() {
+                return "~".to_string();
+            }
+            return format!("~/{}", rest.to_string_lossy());
+        }
+        p.to_string_lossy().to_string()
+    };
+
+    let mut entries = vec![abbreviate(&cwd)];
+    for dir in stack.iter().rev() {
+        entries.push(abbreviate(dir));
+    }
+
+    if verbose {
+        let lines: Vec<String> = entries
+            .iter()
+            .enumerate()
+            .map(|(i, d)| format!(" {i}  {d}"))
+            .collect();
+        ok(lines)
+    } else if per_line {
+        ok(entries)
+    } else {
+        ok(vec![entries.join(" ")])
+    }
+}
+
+// ── expr ────────────────────────────────────────────────────────────────────
+
+fn execute_expr(args: &[String]) -> BuiltinResult {
+    if args.is_empty() {
+        return fail("expr: missing operand".to_string());
+    }
+
+    match eval_expr(args) {
+        Ok(value) => {
+            let exit_code = if value == "0" || value.is_empty() { 1 } else { 0 };
+            BuiltinResult {
+                output: vec![value],
+                exit_app: false,
+                change_dir: None,
+                exit_code,
+            }
+        }
+        Err(msg) => BuiltinResult {
+            output: vec![format!("expr: {msg}")],
+            exit_app: false,
+            change_dir: None,
+            exit_code: 2,
+        },
+    }
+}
+
+fn eval_expr(args: &[String]) -> Result<String, String> {
+    let mut pos = 0;
+    let result = parse_expr_or(args, &mut pos)?;
+    if pos < args.len() {
+        return Err(format!("syntax error near '{}'", args[pos]));
+    }
+    Ok(result)
+}
+
+// OR level: expr1 | expr2
+fn parse_expr_or(args: &[String], pos: &mut usize) -> Result<String, String> {
+    let mut left = parse_expr_and(args, pos)?;
+    while *pos < args.len() && args[*pos] == "|" {
+        *pos += 1;
+        let right = parse_expr_and(args, pos)?;
+        left = if !left.is_empty() && left != "0" {
+            left
+        } else {
+            right
+        };
+    }
+    Ok(left)
+}
+
+// AND level: expr1 & expr2
+fn parse_expr_and(args: &[String], pos: &mut usize) -> Result<String, String> {
+    let mut left = parse_expr_compare(args, pos)?;
+    while *pos < args.len() && args[*pos] == "&" {
+        *pos += 1;
+        let right = parse_expr_compare(args, pos)?;
+        left = if (!left.is_empty() && left != "0") && (!right.is_empty() && right != "0") {
+            left
+        } else {
+            "0".to_string()
+        };
+    }
+    Ok(left)
+}
+
+// Comparison level: =, !=, <, <=, >, >=
+fn parse_expr_compare(args: &[String], pos: &mut usize) -> Result<String, String> {
+    let left = parse_expr_add(args, pos)?;
+    if *pos < args.len() {
+        let op = &args[*pos];
+        match op.as_str() {
+            "=" | "==" | "!=" | "<" | "<=" | ">" | ">=" => {
+                let op = op.clone();
+                *pos += 1;
+                let right = parse_expr_add(args, pos)?;
+                // Try numeric comparison first
+                let result = if let (Ok(l), Ok(r)) = (left.parse::<i64>(), right.parse::<i64>()) {
+                    match op.as_str() {
+                        "=" | "==" => l == r,
+                        "!=" => l != r,
+                        "<" => l < r,
+                        "<=" => l <= r,
+                        ">" => l > r,
+                        ">=" => l >= r,
+                        _ => false,
+                    }
+                } else {
+                    match op.as_str() {
+                        "=" | "==" => left == right,
+                        "!=" => left != right,
+                        "<" => left < right,
+                        "<=" => left <= right,
+                        ">" => left > right,
+                        ">=" => left >= right,
+                        _ => false,
+                    }
+                };
+                return Ok(if result { "1".to_string() } else { "0".to_string() });
+            }
+            _ => {}
+        }
+    }
+    Ok(left)
+}
+
+// Addition level: +, -
+fn parse_expr_add(args: &[String], pos: &mut usize) -> Result<String, String> {
+    let mut left = parse_expr_mul(args, pos)?;
+    while *pos < args.len() {
+        match args[*pos].as_str() {
+            "+" => {
+                *pos += 1;
+                let right = parse_expr_mul(args, pos)?;
+                let l: i64 = left.parse().map_err(|_| format!("non-integer argument: {left}"))?;
+                let r: i64 = right.parse().map_err(|_| format!("non-integer argument: {right}"))?;
+                left = (l + r).to_string();
+            }
+            "-" => {
+                *pos += 1;
+                let right = parse_expr_mul(args, pos)?;
+                let l: i64 = left.parse().map_err(|_| format!("non-integer argument: {left}"))?;
+                let r: i64 = right.parse().map_err(|_| format!("non-integer argument: {right}"))?;
+                left = (l - r).to_string();
+            }
+            _ => break,
+        }
+    }
+    Ok(left)
+}
+
+// Multiplication level: *, /, %
+fn parse_expr_mul(args: &[String], pos: &mut usize) -> Result<String, String> {
+    let mut left = parse_expr_primary(args, pos)?;
+    while *pos < args.len() {
+        match args[*pos].as_str() {
+            "*" => {
+                *pos += 1;
+                let right = parse_expr_primary(args, pos)?;
+                let l: i64 = left.parse().map_err(|_| format!("non-integer argument: {left}"))?;
+                let r: i64 = right.parse().map_err(|_| format!("non-integer argument: {right}"))?;
+                left = (l * r).to_string();
+            }
+            "/" => {
+                *pos += 1;
+                let right = parse_expr_primary(args, pos)?;
+                let l: i64 = left.parse().map_err(|_| format!("non-integer argument: {left}"))?;
+                let r: i64 = right.parse().map_err(|_| format!("non-integer argument: {right}"))?;
+                if r == 0 {
+                    return Err("division by zero".to_string());
+                }
+                left = (l / r).to_string();
+            }
+            "%" => {
+                *pos += 1;
+                let right = parse_expr_primary(args, pos)?;
+                let l: i64 = left.parse().map_err(|_| format!("non-integer argument: {left}"))?;
+                let r: i64 = right.parse().map_err(|_| format!("non-integer argument: {right}"))?;
+                if r == 0 {
+                    return Err("division by zero".to_string());
+                }
+                left = (l % r).to_string();
+            }
+            _ => break,
+        }
+    }
+    Ok(left)
+}
+
+// Primary: literal, string functions, parenthesized expr
+fn parse_expr_primary(args: &[String], pos: &mut usize) -> Result<String, String> {
+    if *pos >= args.len() {
+        return Err("missing operand".to_string());
+    }
+
+    let token = &args[*pos];
+
+    // String functions
+    match token.as_str() {
+        "length" => {
+            *pos += 1;
+            if *pos >= args.len() {
+                return Err("missing operand for length".to_string());
+            }
+            let s = &args[*pos];
+            *pos += 1;
+            return Ok(s.len().to_string());
+        }
+        "substr" => {
+            *pos += 1;
+            if *pos + 2 >= args.len() {
+                return Err("missing operands for substr".to_string());
+            }
+            let s = &args[*pos];
+            *pos += 1;
+            let start: usize = args[*pos]
+                .parse()
+                .map_err(|_| "non-integer argument".to_string())?;
+            *pos += 1;
+            let len: usize = args[*pos]
+                .parse()
+                .map_err(|_| "non-integer argument".to_string())?;
+            *pos += 1;
+            if start == 0 || start > s.len() {
+                return Ok(String::new());
+            }
+            let result: String = s.chars().skip(start - 1).take(len).collect();
+            return Ok(result);
+        }
+        "index" => {
+            *pos += 1;
+            if *pos + 1 >= args.len() {
+                return Err("missing operands for index".to_string());
+            }
+            let s = &args[*pos];
+            *pos += 1;
+            let chars = &args[*pos];
+            *pos += 1;
+            for (i, ch) in s.chars().enumerate() {
+                if chars.contains(ch) {
+                    return Ok((i + 1).to_string());
+                }
+            }
+            return Ok("0".to_string());
+        }
+        "(" => {
+            *pos += 1;
+            let result = parse_expr_or(args, pos)?;
+            if *pos < args.len() && args[*pos] == ")" {
+                *pos += 1;
+            } else {
+                return Err("missing ')'".to_string());
+            }
+            return Ok(result);
+        }
+        _ => {}
+    }
+
+    // Match operator: STRING : REGEX
+    *pos += 1;
+    if *pos < args.len() && args[*pos] == ":" {
+        *pos += 1;
+        if *pos >= args.len() {
+            return Err("missing operand for match".to_string());
+        }
+        let pattern = &args[*pos];
+        *pos += 1;
+        // Simple prefix match (not full regex)
+        if token.starts_with(pattern.as_str()) {
+            return Ok(pattern.len().to_string());
+        }
+        return Ok("0".to_string());
+    }
+
+    // Plain value
+    Ok(token.clone())
+}
+
+// ── umask ───────────────────────────────────────────────────────────────────
+
+fn execute_umask(args: &[String]) -> BuiltinResult {
+    #[cfg(unix)]
+    {
+        execute_umask_unix(args)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = args;
+        fail("umask: not supported on this platform".to_string())
+    }
+}
+
+#[cfg(unix)]
+fn execute_umask_unix(args: &[String]) -> BuiltinResult {
+    let symbolic = args.iter().any(|a| a == "-S");
+    let reusable = args.iter().any(|a| a == "-p");
+
+    // Filter out flags to find mode arg
+    let mode_arg: Option<&str> = args.iter()
+        .find(|a| !a.starts_with('-'))
+        .map(|s| s.as_str());
+
+    if let Some(mode_str) = mode_arg {
+        // Set umask
+        match u32::from_str_radix(mode_str, 8) {
+            Ok(mode) => {
+                unsafe { libc::umask(mode as libc::mode_t) };
+                ok(Vec::new())
+            }
+            Err(_) => fail(format!("umask: '{}': invalid octal number", mode_str)),
+        }
+    } else {
+        // Display current umask
+        let current = unsafe {
+            let old = libc::umask(0o022);
+            libc::umask(old);
+            old
+        };
+
+        if symbolic {
+            let u = 7 - ((current >> 6) & 7);
+            let g = 7 - ((current >> 3) & 7);
+            let o = 7 - (current & 7);
+            let perm = |bits: u32| -> String {
+                let mut s = String::new();
+                if bits & 4 != 0 { s.push('r'); }
+                if bits & 2 != 0 { s.push('w'); }
+                if bits & 1 != 0 { s.push('x'); }
+                if s.is_empty() { s.push('-'); }
+                s
+            };
+            ok(vec![format!("u={},g={},o={}", perm(u), perm(g), perm(o))])
+        } else if reusable {
+            ok(vec![format!("umask {:04o}", current)])
+        } else {
+            ok(vec![format!("{:04o}", current)])
+        }
+    }
 }
 
 pub(crate) fn home_dir() -> Option<PathBuf> {

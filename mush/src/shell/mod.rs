@@ -98,6 +98,10 @@ pub fn all_commands() -> Vec<CommandInfo> {
     commands.push(CommandInfo { name: "jobs".to_string(), description: Some("(builtin) List background jobs".to_string()) });
     commands.push(CommandInfo { name: "fg".to_string(), description: Some("(builtin) Bring job to foreground".to_string()) });
     commands.push(CommandInfo { name: "bg".to_string(), description: Some("(builtin) Resume job in background".to_string()) });
+    commands.push(CommandInfo { name: "dirs".to_string(), description: Some("(builtin) Display directory stack".to_string()) });
+    commands.push(CommandInfo { name: "wait".to_string(), description: Some("(builtin) Wait for background jobs".to_string()) });
+    commands.push(CommandInfo { name: "expr".to_string(), description: Some("(builtin) Evaluate expressions".to_string()) });
+    commands.push(CommandInfo { name: "umask".to_string(), description: Some("(builtin) Set file creation mask".to_string()) });
 
     // Scripts
     for entry in script_registry::list_scripts() {
