@@ -1,0 +1,141 @@
+; ============================================================================
+; Mush Shell — NSIS Updater
+;
+; Updates binaries and version metadata for an existing Mush installation.
+; Reads install location and mode from registry. Shows only a progress bar —
+; no buttons or settings need to be pressed or configured.
+;
+; Usage:  mush-{version}-update.exe
+; ============================================================================
+
+; --- Compiler flags ---
+Unicode true
+SetCompressor /SOLID lzma
+
+; ============================================================================
+; Application metadata  (keep in sync with installer.nsis)
+; ============================================================================
+!define APP_NAME        "Mush"
+!define APP_VERSION     "0.1.0"
+!define APP_PUBLISHER   "Drew Chase"
+!define APP_URL         "https://github.com/drew-chase/mush"
+!define UNINSTALL_KEY   "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
+
+; Path to the built binaries (relative to this .nsi file)
+!define DIST_DIR        "..\target\dist"
+
+; ============================================================================
+; Includes
+; ============================================================================
+!include "MUI2.nsh"
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
+
+; ============================================================================
+; Installer attributes
+; ============================================================================
+Name "${APP_NAME} ${APP_VERSION} Update"
+OutFile "..\target\mush-${APP_VERSION}-update.exe"
+RequestExecutionLevel highest
+
+; Do not set InstallDir — it is read from registry at runtime.
+
+; ============================================================================
+; ModernUI settings
+; ============================================================================
+!define MUI_ABORTWARNING
+
+; ============================================================================
+; Pages — progress bar only, no interactive pages
+; ============================================================================
+!insertmacro MUI_PAGE_INSTFILES
+
+; ============================================================================
+; Language
+; ============================================================================
+!insertmacro MUI_LANGUAGE "English"
+
+; ============================================================================
+; Variables
+; ============================================================================
+Var InstallMode
+
+; ============================================================================
+; Initialization — locate existing installation from registry
+; ============================================================================
+Function .onInit
+    ; --- Try HKCU first (user install) ---
+    ReadRegStr $InstallMode HKCU "${UNINSTALL_KEY}" "InstallMode"
+    ${If} $InstallMode != ""
+        ReadRegStr $INSTDIR HKCU "${UNINSTALL_KEY}" "InstallLocation"
+        ${If} $INSTDIR != ""
+            Return
+        ${EndIf}
+    ${EndIf}
+
+    ; --- Try HKLM (system install) ---
+    ReadRegStr $InstallMode HKLM "${UNINSTALL_KEY}" "InstallMode"
+    ${If} $InstallMode != ""
+        ReadRegStr $INSTDIR HKLM "${UNINSTALL_KEY}" "InstallLocation"
+        ${If} $INSTDIR != ""
+            Return
+        ${EndIf}
+    ${EndIf}
+
+    ; --- No existing installation found ---
+    MessageBox MB_OK|MB_ICONSTOP "Mush is not installed. Please run the installer first."
+    SetErrorLevel 1
+    Abort
+FunctionEnd
+
+; ============================================================================
+; Main update section — overwrite binaries and update version metadata
+; ============================================================================
+Section "Update"
+    ; --- Overwrite binaries ---
+    SetOutPath "$INSTDIR\bin"
+    SetOverwrite on
+
+    DetailPrint "Updating Mush binaries..."
+
+    File "${DIST_DIR}\mush.exe"
+    File "${DIST_DIR}\cat.exe"
+    File "${DIST_DIR}\cp.exe"
+    File "${DIST_DIR}\cut.exe"
+    File "${DIST_DIR}\date.exe"
+    File "${DIST_DIR}\echo.exe"
+    File "${DIST_DIR}\find.exe"
+    File "${DIST_DIR}\grep.exe"
+    File "${DIST_DIR}\head.exe"
+    File "${DIST_DIR}\kill.exe"
+    File "${DIST_DIR}\ls.exe"
+    File "${DIST_DIR}\mkdir.exe"
+    File "${DIST_DIR}\mv.exe"
+    File "${DIST_DIR}\ps.exe"
+    File "${DIST_DIR}\rm.exe"
+    File "${DIST_DIR}\sed.exe"
+    File "${DIST_DIR}\sleep.exe"
+    File "${DIST_DIR}\sort.exe"
+    File "${DIST_DIR}\tail.exe"
+    File "${DIST_DIR}\touch.exe"
+    File "${DIST_DIR}\uniq.exe"
+    File "${DIST_DIR}\wc.exe"
+    File "${DIST_DIR}\whoami.exe"
+
+    ; --- Update version and size in registry ---
+    DetailPrint "Updating registry..."
+
+    ${If} $InstallMode == "system"
+        WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayVersion" "${APP_VERSION}"
+        ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+        IntFmt $0 "0x%08X" $0
+        WriteRegDWORD HKLM "${UNINSTALL_KEY}" "EstimatedSize" $0
+    ${Else}
+        WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${APP_VERSION}"
+        ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+        IntFmt $0 "0x%08X" $0
+        WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" $0
+    ${EndIf}
+
+    DetailPrint "Update complete."
+SectionEnd

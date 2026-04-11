@@ -25,6 +25,7 @@ pub struct Autocomplete {
     pub visible: bool,
     current_prefix: Option<String>,
     path_base: Option<String>,
+    pipe_prefix: Option<String>,
 }
 
 impl Autocomplete {
@@ -199,6 +200,67 @@ impl Autocomplete {
         self.visible = !self.suggestions.is_empty();
     }
 
+    /// Populates suggestions with output lines from a preceding pipeline,
+    /// filtered by the partial argument the user is typing.
+    pub fn update_with_pipe_output(
+        &mut self,
+        partial: &str,
+        output_lines: &[String],
+        full_prefix: &str,
+    ) {
+        self.current_prefix = None;
+        self.path_base = None;
+        self.pipe_prefix = Some(full_prefix.to_string());
+
+        let query_lower = partial.to_lowercase();
+
+        let mut matches: Vec<(Suggestion, i32)> = output_lines
+            .iter()
+            .filter_map(|line| {
+                let trimmed = strip_ansi(line.trim());
+                if trimmed.is_empty() {
+                    return None;
+                }
+                if partial.is_empty() {
+                    Some((
+                        Suggestion {
+                            name: trimmed,
+                            display_name: None,
+                            description: None,
+                        },
+                        0,
+                    ))
+                } else {
+                    let line_lower = trimmed.to_lowercase();
+                    if line_lower.contains(&query_lower) {
+                        let score = if line_lower.starts_with(&query_lower) {
+                            100
+                        } else {
+                            50
+                        };
+                        Some((
+                            Suggestion {
+                                name: trimmed,
+                                display_name: None,
+                                description: None,
+                            },
+                            score,
+                        ))
+                    } else {
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.name.cmp(&b.0.name)));
+        matches.dedup_by(|a, b| a.0.name == b.0.name);
+
+        self.suggestions = matches.into_iter().take(100).map(|(s, _)| s).collect();
+        self.selected = 0;
+        self.visible = !self.suggestions.is_empty();
+    }
+
     pub fn select_up(&mut self) {
         if !self.suggestions.is_empty() {
             if self.selected == 0 {
@@ -218,7 +280,13 @@ impl Autocomplete {
     pub fn accept(&mut self) -> Option<String> {
         if self.visible && self.selected < self.suggestions.len() {
             let name = &self.suggestions[self.selected].name;
-            let result = if let Some(base) = &self.path_base {
+            let result = if let Some(base) = &self.pipe_prefix {
+                if name.contains(' ') {
+                    format!("{base} \"{name}\"")
+                } else {
+                    format!("{base} {name}")
+                }
+            } else if let Some(base) = &self.path_base {
                 let full = format!("{base}{name}");
                 // Find where the command prefix ends (first space) to isolate the path portion
                 if let Some(space_idx) = full.find(' ') {
@@ -250,6 +318,7 @@ impl Autocomplete {
         self.selected = 0;
         self.current_prefix = None;
         self.path_base = None;
+        self.pipe_prefix = None;
     }
 
     pub fn popup_height(&self) -> u16 {
@@ -450,4 +519,28 @@ fn fuzzy_score(query: &str, candidate: &str) -> i32 {
     let length_penalty = (candidate.len() as i32 - query.len() as i32).abs();
 
     score + prefix_bonus - length_penalty
+}
+
+/// Strips ANSI escape sequences (e.g. color codes) from a string.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&ch) = chars.peek() {
+                    chars.next();
+                    if ('@'..='~').contains(&ch) {
+                        break;
+                    }
+                }
+            } else {
+                chars.next();
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }

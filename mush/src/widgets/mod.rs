@@ -90,6 +90,7 @@ pub struct App {
     pending_path_scan: Option<Receiver<Vec<String>>>,
     last_path_scan: Option<Instant>,
     interactive_mode: bool,
+    pipe_output_cache: Option<(String, Vec<String>)>,
 }
 
 impl Drop for App {
@@ -217,6 +218,7 @@ impl App {
             pending_path_scan: None,
             last_path_scan: None,
             interactive_mode: false,
+            pipe_output_cache: None,
         })
     }
 
@@ -1167,6 +1169,70 @@ impl App {
         self.validate_input();
 
         let input = self.input.buffer.clone();
+
+        // --- Pipe-aware autocomplete ---
+        if let Some(pipe_pos) = find_last_pipe_pos(&input) {
+            let preceding = input[..pipe_pos].trim().to_string();
+            let after_pipe = &input[pipe_pos + 1..];
+            let after_trimmed = after_pipe.trim_start();
+
+            if after_trimmed.is_empty() {
+                // Nothing after pipe yet — show command name autocomplete
+                self.pipe_output_cache = None;
+                self.autocomplete.update("");
+                self.autocomplete.visible = false;
+                return;
+            }
+
+            let after_tokens = shell::tokenize(after_trimmed);
+            let after_ends_with_space = after_pipe.ends_with(' ');
+
+            if after_tokens.len() <= 1 && !after_ends_with_space {
+                // User is still typing the command name after the pipe (e.g., "ps | gr")
+                self.pipe_output_cache = None;
+                self.autocomplete.update(after_trimmed);
+                return;
+            }
+
+            // User has a command + is typing arguments — time for pipe output autocomplete
+            let filter_partial = if after_ends_with_space {
+                String::new()
+            } else if after_tokens.len() > 1 {
+                after_tokens.last().cloned().unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            // Build full_prefix: everything up to (but not including) the filter partial
+            let full_prefix = if filter_partial.is_empty() {
+                input.trim_end().to_string()
+            } else {
+                input[..input.len() - filter_partial.len()].trim_end().to_string()
+            };
+
+            // Check cache or execute the preceding pipeline
+            let output = match &self.pipe_output_cache {
+                Some((key, cached)) if *key == preceding => cached.clone(),
+                _ => {
+                    if let Some(lines) = execute_pipeline_for_autocomplete(&preceding) {
+                        self.pipe_output_cache = Some((preceding, lines.clone()));
+                        lines
+                    } else {
+                        self.pipe_output_cache = None;
+                        self.autocomplete.close();
+                        return;
+                    }
+                }
+            };
+
+            self.autocomplete
+                .update_with_pipe_output(&filter_partial, &output, &full_prefix);
+            return;
+        }
+
+        // No pipe — clear pipe cache and proceed with normal autocomplete
+        self.pipe_output_cache = None;
+
         let has_space = input.contains(' ');
 
         if has_space {
@@ -1665,6 +1731,67 @@ fn decode_output(bytes: Vec<u8>) -> String {
     }
 
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Finds the byte position of the last unquoted `|` that is not part of `||`.
+fn find_last_pipe_pos(input: &str) -> Option<usize> {
+    let mut last_pipe = None;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+    let mut byte_offset = 0;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        let ch_len = ch.len_utf8();
+
+        match ch {
+            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            '"' if !in_single_quote => in_double_quote = !in_double_quote,
+            '|' if !in_single_quote && !in_double_quote => {
+                if i + 1 < chars.len() && chars[i + 1] == '|' {
+                    // Skip || (logical OR)
+                    byte_offset += ch_len + chars[i + 1].len_utf8();
+                    i += 2;
+                    continue;
+                }
+                last_pipe = Some(byte_offset);
+            }
+            '\\' if !in_single_quote => {
+                // Skip escaped character
+                if i + 1 < chars.len() {
+                    byte_offset += ch_len + chars[i + 1].len_utf8();
+                    i += 2;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+
+        byte_offset += ch_len;
+        i += 1;
+    }
+
+    last_pipe
+}
+
+/// Executes a pipeline string synchronously for autocomplete, with a timeout.
+fn execute_pipeline_for_autocomplete(preceding: &str) -> Option<Vec<String>> {
+    let input = preceding.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        if let Ok(cl) = shell::parser::parse(&input)
+            && let Some(chain) = cl.chains.first()
+        {
+            let result = shell::pipeline::execute_chain_sync(chain);
+            let lines: Vec<String> = result.output.into_iter().take(10_000).collect();
+            let _ = tx.send(lines);
+        }
+    });
+
+    rx.recv_timeout(std::time::Duration::from_secs(2)).ok()
 }
 
 /// Configures a Command to produce colored output even when stdout is piped.

@@ -520,7 +520,7 @@ fn execute_subshell_sync(inner: &super::ast::CommandLine) -> SyncExecResult {
 }
 
 /// Execute a pipeline synchronously.
-fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
+pub fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
     // Handle subshell pipelines
     if let Some(ref inner) = pipeline.subshell {
         return execute_subshell_sync(inner);
