@@ -11,6 +11,8 @@ use std::path::PathBuf;
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     std::fs::create_dir_all(get_appdata_path())?;
+    std::fs::create_dir_all(get_appdata_path().join("scripts"))?;
+    shell::script_registry::scan_scripts(&get_appdata_path().join("scripts"));
     Config::load_or_default(get_appdata_path().join("config.toml"))?;
     Config::get().save()?;
     ratatui::run(|terminal| -> color_eyre::Result<()> {

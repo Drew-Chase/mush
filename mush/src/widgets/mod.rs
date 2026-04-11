@@ -67,6 +67,7 @@ pub struct App {
     help_cache: HashMap<String, Vec<CommandOption>>,
     pending_help_lookups: Vec<PendingHelpLookup>,
     last_help_prefix: Option<String>,
+    script_watcher_rx: Receiver<()>,
 }
 
 impl Drop for App {
@@ -111,6 +112,27 @@ impl App {
             });
         }
 
+        // Spawn filesystem watcher for the scripts directory
+        let (script_tx, script_watcher_rx) = mpsc::channel();
+        let scripts_dir = crate::get_appdata_path().join("scripts");
+        std::thread::spawn(move || {
+            use notify::{RecursiveMode, Watcher, recommended_watcher};
+            let tx = script_tx;
+            let mut watcher = match recommended_watcher(move |res: Result<notify::Event, _>| {
+                if res.is_ok() {
+                    let _ = tx.send(());
+                }
+            }) {
+                Ok(w) => w,
+                Err(_) => return,
+            };
+            let _ = watcher.watch(&scripts_dir, RecursiveMode::NonRecursive);
+            // Block to keep the watcher alive for the lifetime of the app
+            loop {
+                std::thread::park();
+            }
+        });
+
         Ok(Self {
             history,
             input: CommandInput::default(),
@@ -124,6 +146,7 @@ impl App {
             help_cache,
             pending_help_lookups: Vec::new(),
             last_help_prefix: None,
+            script_watcher_rx,
         })
     }
 
@@ -143,6 +166,8 @@ impl App {
             if !self.pending_help_lookups.is_empty() {
                 self.drain_help_lookups();
             }
+
+            self.drain_script_watcher();
 
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -436,67 +461,46 @@ impl App {
                     .stderr(Stdio::piped())
                     .spawn()
                 {
-                    Ok(mut child) => {
-                        let (tx, rx) = mpsc::channel::<OutputChunk>();
-
-                        if let Some(stdout) = child.stdout.take() {
-                            let tx_out = tx.clone();
-                            std::thread::spawn(move || {
-                                let mut reader = std::io::BufReader::new(stdout);
-                                let mut buf = [0u8; 4096];
-                                loop {
-                                    match reader.read(&mut buf) {
-                                        Ok(0) => break,
-                                        Ok(n) => {
-                                            let text =
-                                                String::from_utf8_lossy(&buf[..n]).to_string();
-                                            if tx_out.send(OutputChunk::Data(text)).is_err() {
-                                                break;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            let _ = tx_out.send(OutputChunk::Error(e.to_string()));
-                                            break;
-                                        }
-                                    }
-                                }
-                            });
-                        }
-
-                        if let Some(stderr) = child.stderr.take() {
-                            let tx_err = tx.clone();
-                            std::thread::spawn(move || {
-                                let mut reader = std::io::BufReader::new(stderr);
-                                let mut buf = [0u8; 4096];
-                                loop {
-                                    match reader.read(&mut buf) {
-                                        Ok(0) => break,
-                                        Ok(n) => {
-                                            let text =
-                                                String::from_utf8_lossy(&buf[..n]).to_string();
-                                            if tx_err.send(OutputChunk::Data(text)).is_err() {
-                                                break;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            let _ = tx_err.send(OutputChunk::Error(e.to_string()));
-                                            break;
-                                        }
-                                    }
-                                }
-                            });
-                        }
-
-                        drop(tx);
-
-                        self.running_command = Some(RunningCommand {
-                            command: command_display.to_string(),
-                            buffer: LiveOutputBuffer::new(),
-                            rx,
-                            child,
-                            start: Instant::now(),
+                    Ok(child) => {
+                        self.spawn_streaming(command_display, child);
+                        None
+                    }
+                    Err(e) => Some(ExecResult {
+                        output: vec![format!("error: {e}")],
+                        exit_code: -1,
+                        exit_app: false,
+                    }),
+                }
+            }
+            shell::CommandKind::Script(entry) => {
+                let bun_path = match shell::path_resolver::find_in_path("bun") {
+                    Some(p) => p,
+                    None => {
+                        return Some(ExecResult {
+                            output: vec![
+                                format!(
+                                    "error: script '{}' requires Bun but 'bun' was not found on PATH.",
+                                    entry.name
+                                ),
+                                "Install Bun from https://bun.sh or re-run the Mush installer with the Bun option."
+                                    .to_string(),
+                            ],
+                            exit_code: 1,
+                            exit_app: false,
                         });
-
+                    }
+                };
+                match std::process::Command::new(&bun_path)
+                    .arg("run")
+                    .arg(&entry.entry_point)
+                    .args(args)
+                    .current_dir(&entry.script_dir)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                {
+                    Ok(child) => {
+                        self.spawn_streaming(command_display, child);
                         None
                     }
                     Err(e) => Some(ExecResult {
@@ -568,6 +572,54 @@ impl App {
                     exit_app,
                 }
             }
+            shell::CommandKind::Script(entry) => {
+                let bun_path = match shell::path_resolver::find_in_path("bun") {
+                    Some(p) => p,
+                    None => {
+                        return ExecResult {
+                            output: vec![
+                                format!(
+                                    "error: script '{}' requires Bun but 'bun' was not found on PATH.",
+                                    entry.name
+                                ),
+                                "Install Bun from https://bun.sh or re-run the Mush installer with the Bun option."
+                                    .to_string(),
+                            ],
+                            exit_code: 1,
+                            exit_app: false,
+                        };
+                    }
+                };
+                match std::process::Command::new(&bun_path)
+                    .arg("run")
+                    .arg(&entry.entry_point)
+                    .args(args)
+                    .current_dir(&entry.script_dir)
+                    .output()
+                {
+                    Ok(out) => {
+                        let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                            .lines()
+                            .map(String::from)
+                            .collect();
+                        let stderr_lines: Vec<String> = String::from_utf8_lossy(&out.stderr)
+                            .lines()
+                            .map(String::from)
+                            .collect();
+                        lines.extend(stderr_lines);
+                        ExecResult {
+                            output: lines,
+                            exit_code: out.status.code().unwrap_or(-1),
+                            exit_app: false,
+                        }
+                    }
+                    Err(e) => ExecResult {
+                        output: vec![format!("error: {e}")],
+                        exit_code: -1,
+                        exit_app: false,
+                    },
+                }
+            }
             shell::CommandKind::NotFound => {
                 let name = input.split_whitespace().next().unwrap_or(input);
                 ExecResult {
@@ -577,6 +629,66 @@ impl App {
                 }
             }
         }
+    }
+
+    fn spawn_streaming(&mut self, command_display: &str, mut child: Child) {
+        let (tx, rx) = mpsc::channel::<OutputChunk>();
+
+        if let Some(stdout) = child.stdout.take() {
+            let tx_out = tx.clone();
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(stdout);
+                let mut buf = [0u8; 4096];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                            if tx_out.send(OutputChunk::Data(text)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx_out.send(OutputChunk::Error(e.to_string()));
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        if let Some(stderr) = child.stderr.take() {
+            let tx_err = tx.clone();
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(stderr);
+                let mut buf = [0u8; 4096];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                            if tx_err.send(OutputChunk::Data(text)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx_err.send(OutputChunk::Error(e.to_string()));
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        drop(tx);
+
+        self.running_command = Some(RunningCommand {
+            command: command_display.to_string(),
+            buffer: LiveOutputBuffer::new(),
+            rx,
+            child,
+            start: Instant::now(),
+        });
     }
 
     fn run_interactive(&mut self, path: &std::path::Path, args: &[&str]) -> ExecResult {
@@ -875,6 +987,18 @@ impl App {
 
         if !completed.is_empty() {
             self.refresh_autocomplete();
+        }
+    }
+
+    fn drain_script_watcher(&mut self) {
+        let mut changed = false;
+        while self.script_watcher_rx.try_recv().is_ok() {
+            changed = true;
+        }
+        if changed {
+            let scripts_dir = crate::get_appdata_path().join("scripts");
+            shell::script_registry::scan_scripts(&scripts_dir);
+            self.input.notify("Scripts reloaded".to_string());
         }
     }
 

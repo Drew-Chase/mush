@@ -12,11 +12,13 @@ Var ChkAddToPath
 Var ChkWindowsTerminal
 Var ChkStartMenu
 Var ChkSetDefaultShell
+Var ChkInstallBun
 
 Var OptAddToPath
 Var OptWindowsTerminal
 Var OptStartMenu
 Var OptSetDefaultShell
+Var OptInstallBun
 
 ; Register the custom page
 Page custom OptionsPage OptionsPageLeave
@@ -71,6 +73,15 @@ Function OptionsPage
     Pop $0
     SetCtlColors $0 "888888" transparent
 
+    ; --- Install Bun runtime ---
+    ${NSD_CreateCheckbox} 20u 170u 280u 16u "Install &Bun runtime (for TypeScript scripts)"
+    Pop $ChkInstallBun
+    ${NSD_SetState} $ChkInstallBun ${BST_UNCHECKED}
+
+    ${NSD_CreateLabel} 40u 188u 260u 20u "Downloads and installs Bun from bun.sh. Skip if already installed."
+    Pop $0
+    SetCtlColors $0 "888888" transparent
+
     nsDialogs::Show
 FunctionEnd
 
@@ -82,6 +93,7 @@ Function OptionsPageLeave
     ${NSD_GetState} $ChkWindowsTerminal $OptWindowsTerminal
     ${NSD_GetState} $ChkStartMenu $OptStartMenu
     ${NSD_GetState} $ChkSetDefaultShell $OptSetDefaultShell
+    ${NSD_GetState} $ChkInstallBun $OptInstallBun
 FunctionEnd
 
 !endif ; OPTIONS_NSH

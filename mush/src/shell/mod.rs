@@ -1,6 +1,7 @@
 pub mod builtins;
 pub mod help_parser;
 pub mod path_resolver;
+pub mod script_registry;
 
 use std::path::{Path, PathBuf};
 
@@ -11,6 +12,7 @@ pub enum CommandKind {
     Builtin(builtins::BuiltinCommand),
     External(PathBuf),
     Alias(Vec<String>),
+    Script(script_registry::ScriptEntry),
     NotFound,
 }
 
@@ -34,6 +36,10 @@ pub fn resolve_command(input: &str) -> CommandKind {
 
     if let Some(builtin) = builtins::lookup(name) {
         return CommandKind::Builtin(builtin);
+    }
+
+    if let Some(entry) = script_registry::find_script(name) {
+        return CommandKind::Script(entry);
     }
 
     if let Some(path) = path_resolver::find_in_path(name) {
@@ -68,6 +74,14 @@ pub fn all_commands() -> Vec<CommandInfo> {
     commands.push(CommandInfo { name: "cls".to_string(), description: Some("(builtin)".to_string()) });
     commands.push(CommandInfo { name: "exit".to_string(), description: Some("(builtin)".to_string()) });
 
+    // Scripts
+    for entry in script_registry::list_scripts() {
+        commands.push(CommandInfo {
+            name: entry.name.clone(),
+            description: Some(format!("(script) {}", entry.description)),
+        });
+    }
+
     // PATH executables
     for name in path_resolver::list_executables() {
         commands.push(CommandInfo {
@@ -93,6 +107,10 @@ pub fn is_valid_command(input: &str) -> bool {
     }
 
     if builtins::lookup(name).is_some() {
+        return true;
+    }
+
+    if script_registry::is_script(name) {
         return true;
     }
 

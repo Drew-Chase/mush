@@ -122,6 +122,7 @@ Function .onInit
     StrCpy $OptWindowsTerminal ${BST_CHECKED}
     StrCpy $OptStartMenu ${BST_CHECKED}
     StrCpy $OptSetDefaultShell ${BST_UNCHECKED}
+    StrCpy $OptInstallBun ${BST_UNCHECKED}
 FunctionEnd
 
 ; ============================================================================

@@ -114,6 +114,18 @@ Section "Mush Shell" SecMain
         SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
     ${EndIf}
 
+    ; --- Install Bun runtime ---
+    ${If} $OptInstallBun == ${BST_CHECKED}
+        DetailPrint "Installing Bun runtime..."
+        nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm bun.sh/install.ps1 | iex"'
+        Pop $0
+        ${If} $0 != 0
+            DetailPrint "Warning: Bun installation may have failed (exit code: $0). Install manually from https://bun.sh"
+        ${Else}
+            DetailPrint "Bun runtime installed successfully."
+        ${EndIf}
+    ${EndIf}
+
 SectionEnd
 
 ; ============================================================================

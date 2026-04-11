@@ -1,8 +1,9 @@
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph, Widget};
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct CommandInput {
@@ -10,6 +11,7 @@ pub struct CommandInput {
     pub cursor: usize,
     pub cwd: String,
     pub valid_command: bool,
+    pub notification: Option<(String, Instant)>,
 }
 
 impl Default for CommandInput {
@@ -22,6 +24,7 @@ impl Default for CommandInput {
             cursor: 0,
             cwd,
             valid_command: true,
+            notification: None,
         }
     }
 }
@@ -95,6 +98,10 @@ impl CommandInput {
             .unwrap_or_default();
     }
 
+    pub fn notify(&mut self, message: String) {
+        self.notification = Some((message, Instant::now()));
+    }
+
     /// Total height this widget needs: 2 border + 1 content
     pub fn required_height() -> u16 {
         3
@@ -122,13 +129,29 @@ impl Widget for &CommandInput {
             Span::raw(" "),
         ]).alignment(ratatui::layout::Alignment::Right);
 
-        let block = Block::new()
+        // Build notification title (top-right) if active and not expired
+        let notification_title = self
+            .notification
+            .as_ref()
+            .filter(|(_, ts)| ts.elapsed().as_secs() < 15)
+            .map(|(msg, _)| {
+                Line::from(vec![
+                    Span::styled(format!(" {msg} "), Style::default().fg(Color::Green)),
+                ])
+                .alignment(Alignment::Right)
+            });
+
+        let mut block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::DarkGray))
             .padding(Padding::horizontal(1))
             .title(cwd_title)
             .title_bottom(hints);
+
+        if let Some(notif) = notification_title {
+            block = block.title(notif);
+        }
 
         let inner = block.inner(area);
         block.render(area, buf);
