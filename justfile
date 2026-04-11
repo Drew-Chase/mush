@@ -8,13 +8,8 @@ build:
     cargo build --workspace --release
 
 # Remove the dist directory
-[windows]
 clean:
-    if (Test-Path "{{dist_dir}}") { Remove-Item -Recurse -Force "{{dist_dir}}" }
-
-[unix]
-clean:
-    rm -rf "{{dist_dir}}"
+    cargo clean
 
 # Build and package all workspace executables into dist_dir
 [windows]
