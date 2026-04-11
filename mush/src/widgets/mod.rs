@@ -315,6 +315,7 @@ impl App {
                         self.input.buffer = accepted;
                         self.input.cursor = self.input.buffer.len();
                         self.validate_input();
+                        self.on_input_changed();
                     }
                 }
                 (KeyModifiers::NONE, KeyCode::Up) if self.autocomplete.visible => {
@@ -445,12 +446,12 @@ impl App {
         command_display: &str,
         input: &str,
     ) -> Option<ExecResult> {
-        let parts: Vec<&str> = input.split_whitespace().collect();
-        let args = if parts.len() > 1 { &parts[1..] } else { &[] };
+        let parts = shell::tokenize(input);
+        let args = if parts.len() > 1 { &parts[1..] } else { &[] as &[String] };
 
         match kind {
             shell::CommandKind::External(ref path)
-                if !parts.is_empty() && shell::is_interactive(parts[0], args) =>
+                if !parts.is_empty() && shell::is_interactive(&parts[0], args) =>
             {
                 Some(self.run_interactive(path, args))
             }
@@ -515,8 +516,8 @@ impl App {
     }
 
     fn dispatch_resolved_sync(&mut self, kind: shell::CommandKind, input: &str) -> ExecResult {
-        let parts: Vec<&str> = input.split_whitespace().collect();
-        let args = if parts.len() > 1 { &parts[1..] } else { &[] };
+        let parts = shell::tokenize(input);
+        let args = if parts.len() > 1 { &parts[1..] } else { &[] as &[String] };
 
         match kind {
             shell::CommandKind::Builtin(cmd) => {
@@ -621,7 +622,7 @@ impl App {
                 }
             }
             shell::CommandKind::NotFound => {
-                let name = input.split_whitespace().next().unwrap_or(input);
+                let name = parts.first().map(|s| s.as_str()).unwrap_or(input);
                 ExecResult {
                     output: vec![format!("command not found: {name}")],
                     exit_code: 127,
@@ -691,7 +692,7 @@ impl App {
         });
     }
 
-    fn run_interactive(&mut self, path: &std::path::Path, args: &[&str]) -> ExecResult {
+    fn run_interactive(&mut self, path: &std::path::Path, args: &[String]) -> ExecResult {
         use ratatui::crossterm::ExecutableCommand;
         use ratatui::crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 
@@ -803,13 +804,13 @@ impl App {
         let has_space = input.contains(' ');
 
         if has_space {
-            let tokens: Vec<&str> = input.split_whitespace().collect();
+            let tokens = shell::tokenize(&input);
             let ends_with_space = input.ends_with(' ');
 
             let (prefix_tokens, partial) = if ends_with_space {
-                (tokens.as_slice(), "")
+                (tokens.as_slice(), String::new())
             } else if tokens.len() > 1 {
-                (&tokens[..tokens.len() - 1], tokens[tokens.len() - 1])
+                (&tokens[..tokens.len() - 1], tokens[tokens.len() - 1].clone())
             } else {
                 self.autocomplete.update(&input);
                 return;
@@ -818,6 +819,12 @@ impl App {
             let prefix = prefix_tokens.join(" ");
 
             if !prefix.is_empty() {
+                // Check if the partial token looks like a path
+                if autocomplete::is_path_like(&partial) {
+                    self.autocomplete.update_with_paths(&partial, &prefix);
+                    return;
+                }
+
                 let should_spawn = match &self.last_help_prefix {
                     Some(last) => *last != prefix,
                     None => true,
@@ -829,7 +836,7 @@ impl App {
                 }
 
                 self.autocomplete
-                    .update_with_help(partial, self.help_cache.get(&prefix), &prefix);
+                    .update_with_help(&partial, self.help_cache.get(&prefix), &prefix);
             } else {
                 self.autocomplete.update(&input);
             }
@@ -852,36 +859,99 @@ impl App {
             return;
         }
 
-        let parts: Vec<&str> = command_prefix.split_whitespace().collect();
+        let parts = shell::tokenize(&command_prefix);
         if parts.is_empty() {
             return;
         }
 
-        let base_cmd = parts[0];
+        let base_cmd = &parts[0];
 
-        if shell::builtins::lookup(base_cmd).is_some() {
-            return;
+        // Determine how to get help for this command
+        enum HelpTarget {
+            External {
+                path: std::path::PathBuf,
+                sub_args: Vec<String>,
+            },
+            Script {
+                bun_path: std::path::PathBuf,
+                entry_point: std::path::PathBuf,
+                script_dir: std::path::PathBuf,
+                sub_args: Vec<String>,
+            },
         }
 
-        let path = match shell::path_resolver::find_in_path(base_cmd) {
-            Some(p) => p,
-            None => return,
+        let target = if base_cmd == "scripts" {
+            // Inject subcommands directly for the `scripts` builtin
+            self.help_cache.insert(
+                command_prefix,
+                vec![
+                    help_parser::CommandOption {
+                        name: "new".into(),
+                        description: Some("Create a new script from template".into()),
+                        kind: help_parser::OptionKind::Subcommand,
+                    },
+                    help_parser::CommandOption {
+                        name: "reload".into(),
+                        description: Some("Reload all scripts".into()),
+                        kind: help_parser::OptionKind::Subcommand,
+                    },
+                ],
+            );
+            self.refresh_autocomplete();
+            return;
+        } else if shell::builtins::lookup(base_cmd).is_some() {
+            return;
+        } else if let Some(entry) = shell::script_registry::find_script(base_cmd) {
+            let bun_path = match shell::path_resolver::find_in_path("bun") {
+                Some(p) => p,
+                None => return,
+            };
+            HelpTarget::Script {
+                bun_path,
+                entry_point: entry.entry_point,
+                script_dir: entry.script_dir,
+                sub_args: parts[1..].to_vec(),
+            }
+        } else if let Some(path) = shell::path_resolver::find_in_path(base_cmd) {
+            HelpTarget::External {
+                path,
+                sub_args: parts[1..].to_vec(),
+            }
+        } else {
+            return;
         };
 
-        let sub_args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
         let prefix_clone = command_prefix.clone();
-
         let (tx, rx) = mpsc::channel::<HelpResult>();
 
         std::thread::spawn(move || {
             let try_help = |flag: &str| -> Option<String> {
-                let mut child = std::process::Command::new(&path)
-                    .args(&sub_args)
-                    .arg(flag)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .ok()?;
+                let mut child = match &target {
+                    HelpTarget::External { path, sub_args } => {
+                        std::process::Command::new(path)
+                            .args(sub_args)
+                            .arg(flag)
+                            .stdout(Stdio::piped())
+                            .stderr(Stdio::piped())
+                            .spawn()
+                            .ok()?
+                    }
+                    HelpTarget::Script {
+                        bun_path,
+                        entry_point,
+                        script_dir,
+                        sub_args,
+                    } => std::process::Command::new(bun_path)
+                        .arg("run")
+                        .arg(entry_point)
+                        .args(sub_args)
+                        .arg(flag)
+                        .current_dir(script_dir)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .ok()?,
+                };
 
                 let start = Instant::now();
                 loop {
@@ -1008,21 +1078,25 @@ impl App {
             return;
         }
 
-        let tokens: Vec<&str> = input.split_whitespace().collect();
+        let tokens = shell::tokenize(input);
         let ends_with_space = input.ends_with(' ');
 
         let (prefix_tokens, partial) = if ends_with_space {
-            (tokens.as_slice(), "")
+            (tokens.as_slice(), String::new())
         } else if tokens.len() > 1 {
-            (&tokens[..tokens.len() - 1], tokens[tokens.len() - 1])
+            (&tokens[..tokens.len() - 1], tokens[tokens.len() - 1].clone())
         } else {
             return;
         };
 
         let prefix = prefix_tokens.join(" ");
         if !prefix.is_empty() {
-            self.autocomplete
-                .update_with_help(partial, self.help_cache.get(&prefix), &prefix);
+            if autocomplete::is_path_like(&partial) {
+                self.autocomplete.update_with_paths(&partial, &prefix);
+            } else {
+                self.autocomplete
+                    .update_with_help(&partial, self.help_cache.get(&prefix), &prefix);
+            }
         }
     }
 

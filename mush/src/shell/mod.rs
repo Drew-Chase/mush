@@ -18,20 +18,18 @@ pub enum CommandKind {
 
 /// Resolves the first token of `input` to a command kind.
 pub fn resolve_command(input: &str) -> CommandKind {
-    let name = match input.split_whitespace().next() {
+    let tokens = tokenize(input);
+    let name = match tokens.first() {
         Some(name) => name,
         None => return CommandKind::NotFound,
     };
 
-    // Check aliases first (alias name must be the entire first token with no args
-    // to trigger alias expansion, OR the full input matches)
+    // Check aliases first — only expand if user typed just the alias name (no extra args)
     let config = Config::get();
-    if let Some(commands) = config.alias.get_commands(name) {
-        // If the user typed just the alias name (no extra args), expand it
-        let args_after: &str = input[name.len()..].trim();
-        if args_after.is_empty() {
-            return CommandKind::Alias(commands);
-        }
+    if let Some(commands) = config.alias.get_commands(name)
+        && tokens.len() == 1
+    {
+        return CommandKind::Alias(commands);
     }
 
     if let Some(builtin) = builtins::lookup(name) {
@@ -73,6 +71,7 @@ pub fn all_commands() -> Vec<CommandInfo> {
     commands.push(CommandInfo { name: "clear".to_string(), description: Some("(builtin)".to_string()) });
     commands.push(CommandInfo { name: "cls".to_string(), description: Some("(builtin)".to_string()) });
     commands.push(CommandInfo { name: "exit".to_string(), description: Some("(builtin)".to_string()) });
+    commands.push(CommandInfo { name: "scripts".to_string(), description: Some("(builtin) Manage mush scripts".to_string()) });
 
     // Scripts
     for entry in script_registry::list_scripts() {
@@ -96,7 +95,8 @@ pub fn all_commands() -> Vec<CommandInfo> {
 /// Quick check for syntax highlighting: is the first token a valid command?
 /// Returns `true` for empty input (no red on empty buffer).
 pub fn is_valid_command(input: &str) -> bool {
-    let name = match input.split_whitespace().next() {
+    let tokens = tokenize(input);
+    let name = match tokens.first() {
         Some(name) => name,
         None => return true,
     };
@@ -117,9 +117,84 @@ pub fn is_valid_command(input: &str) -> bool {
     path_resolver::is_executable(name)
 }
 
-pub fn is_interactive(cmd_name: &str, args: &[&str]) -> bool {
+/// Splits a shell input string into tokens, respecting double quotes, single
+/// quotes, backticks, and backslash-escaped spaces.
+///
+/// Quotes are stripped from the output. Unclosed quotes are handled gracefully
+/// by treating the remainder of the string as part of the current token.
+pub fn tokenize(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut chars = input.chars().peekable();
+    let mut in_token = false;
+
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                in_token = true;
+                // consume until closing double quote
+                for ch in chars.by_ref() {
+                    if ch == '"' {
+                        break;
+                    }
+                    current.push(ch);
+                }
+            }
+            '\'' => {
+                in_token = true;
+                for ch in chars.by_ref() {
+                    if ch == '\'' {
+                        break;
+                    }
+                    current.push(ch);
+                }
+            }
+            '`' => {
+                in_token = true;
+                for ch in chars.by_ref() {
+                    if ch == '`' {
+                        break;
+                    }
+                    current.push(ch);
+                }
+            }
+            '\\' => {
+                in_token = true;
+                if let Some(&next) = chars.peek() {
+                    if next == ' ' {
+                        current.push(' ');
+                        chars.next();
+                    } else {
+                        // preserve backslash for non-space escapes
+                        current.push('\\');
+                    }
+                } else {
+                    current.push('\\');
+                }
+            }
+            c if c.is_whitespace() => {
+                if in_token {
+                    tokens.push(std::mem::take(&mut current));
+                    in_token = false;
+                }
+            }
+            _ => {
+                in_token = true;
+                current.push(c);
+            }
+        }
+    }
+
+    if in_token {
+        tokens.push(current);
+    }
+
+    tokens
+}
+
+pub fn is_interactive(cmd_name: &str, args: &[String]) -> bool {
     const NON_INTERACTIVE_FLAGS: &[&str] = &["--help", "-h", "-?", "--version", "-V"];
-    if args.iter().any(|a| NON_INTERACTIVE_FLAGS.contains(a)) {
+    if args.iter().any(|a| NON_INTERACTIVE_FLAGS.contains(&a.as_str())) {
         return false;
     }
 
@@ -147,4 +222,98 @@ pub fn is_interactive(cmd_name: &str, args: &[&str]) -> bool {
         .interactive_commands
         .iter()
         .any(|c| c.to_lowercase() == stem)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tokenize;
+
+    #[test]
+    fn simple_split() {
+        assert_eq!(tokenize("cmd arg1 arg2"), vec!["cmd", "arg1", "arg2"]);
+    }
+
+    #[test]
+    fn double_quotes() {
+        assert_eq!(
+            tokenize(r#"cmd "arg with spaces" arg2"#),
+            vec!["cmd", "arg with spaces", "arg2"]
+        );
+    }
+
+    #[test]
+    fn single_quotes() {
+        assert_eq!(
+            tokenize("cmd 'arg with spaces'"),
+            vec!["cmd", "arg with spaces"]
+        );
+    }
+
+    #[test]
+    fn backtick_quotes() {
+        assert_eq!(
+            tokenize("cmd `arg with spaces`"),
+            vec!["cmd", "arg with spaces"]
+        );
+    }
+
+    #[test]
+    fn escaped_spaces() {
+        assert_eq!(
+            tokenize(r"cmd arg\ with\ spaces"),
+            vec!["cmd", "arg with spaces"]
+        );
+    }
+
+    #[test]
+    fn mixed() {
+        assert_eq!(
+            tokenize(r#"cmd "a b" 'c d' e\ f"#),
+            vec!["cmd", "a b", "c d", "e f"]
+        );
+    }
+
+    #[test]
+    fn unclosed_quote() {
+        assert_eq!(tokenize(r#"cmd "unclosed"#), vec!["cmd", "unclosed"]);
+    }
+
+    #[test]
+    fn empty_input() {
+        assert_eq!(tokenize(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn whitespace_only() {
+        assert_eq!(tokenize("   "), Vec::<String>::new());
+    }
+
+    #[test]
+    fn empty_quotes() {
+        assert_eq!(
+            tokenize(r#"cmd "" arg"#),
+            vec!["cmd", "", "arg"]
+        );
+    }
+
+    #[test]
+    fn adjacent_quoted_and_unquoted() {
+        assert_eq!(tokenize(r#"pre"mid"post"#), vec!["premidpost"]);
+    }
+
+    #[test]
+    fn cd_program_files() {
+        assert_eq!(
+            tokenize(r#"cd "C:\Program Files\Mush""#),
+            vec!["cd", r"C:\Program Files\Mush"]
+        );
+    }
+
+    #[test]
+    fn mkdir_escaped() {
+        assert_eq!(
+            tokenize(r"mkdir New\ Directory"),
+            vec!["mkdir", "New Directory"]
+        );
+    }
 }

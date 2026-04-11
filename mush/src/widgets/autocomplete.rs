@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -21,11 +23,13 @@ pub struct Autocomplete {
     pub selected: usize,
     pub visible: bool,
     current_prefix: Option<String>,
+    path_base: Option<String>,
 }
 
 impl Autocomplete {
     pub fn update(&mut self, input: &str) {
         self.current_prefix = None;
+        self.path_base = None;
 
         let query = input.split_whitespace().next().unwrap_or("");
 
@@ -69,6 +73,7 @@ impl Autocomplete {
         prefix: &str,
     ) {
         self.current_prefix = Some(prefix.to_string());
+        self.path_base = None;
 
         let options = match options {
             Some(opts) if !opts.is_empty() => opts,
@@ -121,6 +126,73 @@ impl Autocomplete {
         self.visible = !self.suggestions.is_empty();
     }
 
+    /// Populates suggestions with filesystem entries matching the given path token.
+    pub fn update_with_paths(&mut self, partial_path: &str, command_prefix: &str) {
+        self.current_prefix = None;
+
+        let (dir, file_prefix, display_base) = split_path(partial_path);
+
+        // Store base so accept() can reconstruct the full command + path
+        self.path_base = Some(format!("{command_prefix} {display_base}"));
+
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => {
+                self.visible = false;
+                self.suggestions.clear();
+                self.selected = 0;
+                return;
+            }
+        };
+
+        let prefix_lower = file_prefix.to_lowercase();
+        let mut dirs: Vec<Suggestion> = Vec::new();
+        let mut files: Vec<Suggestion> = Vec::new();
+
+        for entry in entries.flatten().take(500) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let name_lower = name.to_lowercase();
+
+            if !prefix_lower.is_empty() && !name_lower.starts_with(&prefix_lower) {
+                continue;
+            }
+
+            let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+            let display_name = if is_dir {
+                format!("{name}/")
+            } else {
+                name
+            };
+            let desc = if is_dir {
+                Some("<DIR>".to_string())
+            } else {
+                None
+            };
+
+            let suggestion = Suggestion {
+                name: display_name,
+                description: desc,
+            };
+            if is_dir {
+                dirs.push(suggestion);
+            } else {
+                files.push(suggestion);
+            }
+
+            if dirs.len() + files.len() >= 100 {
+                break;
+            }
+        }
+
+        dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+        self.suggestions = dirs;
+        self.suggestions.extend(files);
+        self.selected = 0;
+        self.visible = !self.suggestions.is_empty();
+    }
+
     pub fn select_up(&mut self) {
         if !self.suggestions.is_empty() {
             if self.selected == 0 {
@@ -140,9 +212,24 @@ impl Autocomplete {
     pub fn accept(&mut self) -> Option<String> {
         if self.visible && self.selected < self.suggestions.len() {
             let name = &self.suggestions[self.selected].name;
-            let result = match &self.current_prefix {
-                Some(prefix) => format!("{prefix} {name}"),
-                None => name.clone(),
+            let result = if let Some(base) = &self.path_base {
+                let full = format!("{base}{name}");
+                // Find where the command prefix ends (first space) to isolate the path portion
+                if let Some(space_idx) = full.find(' ') {
+                    let cmd = &full[..space_idx];
+                    let path = &full[space_idx + 1..];
+                    if path.contains(' ') {
+                        format!("{cmd} \"{path}\"")
+                    } else {
+                        full
+                    }
+                } else {
+                    full
+                }
+            } else if let Some(prefix) = &self.current_prefix {
+                format!("{prefix} {name}")
+            } else {
+                name.clone()
             };
             self.close();
             Some(result)
@@ -156,6 +243,7 @@ impl Autocomplete {
         self.suggestions.clear();
         self.selected = 0;
         self.current_prefix = None;
+        self.path_base = None;
     }
 
     pub fn popup_height(&self) -> u16 {
@@ -235,6 +323,76 @@ impl Widget for &Autocomplete {
         let list = List::new(items).block(block);
         list.render(area, buf);
     }
+}
+
+/// Returns `true` if the token looks like a filesystem path.
+pub(crate) fn is_path_like(token: &str) -> bool {
+    if token.starts_with("./")
+        || token.starts_with(".\\")
+        || token == "."
+        || token.starts_with("../")
+        || token.starts_with("..\\")
+        || token == ".."
+        || token.starts_with('/')
+        || token.starts_with('~')
+    {
+        return true;
+    }
+    // Drive letter pattern: e.g. C: C:\ C:/ D:\foo
+    let bytes = token.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+/// Splits a path token into (directory to read, filename prefix, display base).
+///
+/// The display base is the directory portion as typed by the user (preserving `~`, `./`, etc.)
+/// and always ends with a separator. The `PathBuf` is the resolved directory for `read_dir`.
+fn split_path(token: &str) -> (PathBuf, String, String) {
+    // Find the last path separator
+    let last_sep = token.rfind(['/', '\\']);
+
+    let (dir_str, file_prefix) = match last_sep {
+        Some(idx) => (&token[..=idx], &token[idx + 1..]),
+        None => {
+            // No separator: e.g. "C:" — treat as "C:\"
+            let bytes = token.as_bytes();
+            if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+                let drive = &token[..2];
+                let prefix = &token[2..];
+                let dir_with_sep = format!("{drive}\\");
+                let resolved = PathBuf::from(&dir_with_sep);
+                return (resolved, prefix.to_string(), dir_with_sep);
+            }
+            // Bare "." or ".." without separator
+            if token == "." || token == ".." {
+                let display = format!("{token}/");
+                let resolved = PathBuf::from(token);
+                return (resolved, String::new(), display);
+            }
+            // Fallback: treat as relative path in current dir
+            return (PathBuf::from("."), token.to_string(), String::new());
+        }
+    };
+
+    let display_base = dir_str.to_string();
+
+    // Resolve tilde for the actual PathBuf
+    let resolved = if dir_str.starts_with('~') {
+        match shell::builtins::home_dir() {
+            Some(home) => {
+                let rest = dir_str
+                    .strip_prefix("~/")
+                    .or_else(|| dir_str.strip_prefix("~\\"))
+                    .unwrap_or("");
+                home.join(rest)
+            }
+            None => PathBuf::from(dir_str),
+        }
+    } else {
+        PathBuf::from(dir_str)
+    };
+
+    (resolved, file_prefix.to_string(), display_base)
 }
 
 fn fuzzy_score(query: &str, candidate: &str) -> i32 {
