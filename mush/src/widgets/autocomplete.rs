@@ -302,7 +302,7 @@ impl Widget for &Autocomplete {
                             Style::default().fg(Color::White).bg(bg),
                         ),
                         Span::styled(sep, Style::default().bg(bg)),
-                        Span::styled(truncated, Style::default().fg(Color::DarkGray).bg(bg)),
+                        Span::styled(truncated, Style::default().fg(if is_selected { Color::Gray } else { Color::DarkGray }).bg(bg)),
                     ])
                 } else {
                     Line::styled(
