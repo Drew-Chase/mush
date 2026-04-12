@@ -81,37 +81,13 @@ pub fn all_commands() -> Vec<CommandInfo> {
     }
 
     // Builtins
-    commands.push(CommandInfo { name: "cd".to_string(), description: Some("(builtin) Change directory".to_string()) });
-    commands.push(CommandInfo { name: "clear".to_string(), description: Some("(builtin) Clear screen".to_string()) });
-    commands.push(CommandInfo { name: "cls".to_string(), description: Some("(builtin) Clear screen".to_string()) });
-    commands.push(CommandInfo { name: "exit".to_string(), description: Some("(builtin) Exit shell".to_string()) });
-    commands.push(CommandInfo { name: "scripts".to_string(), description: Some("(builtin) Manage mush scripts".to_string()) });
-    commands.push(CommandInfo { name: "pwd".to_string(), description: Some("(builtin) Print working directory".to_string()) });
-    commands.push(CommandInfo { name: "export".to_string(), description: Some("(builtin) Set environment variables".to_string()) });
-    commands.push(CommandInfo { name: "unset".to_string(), description: Some("(builtin) Remove environment variables".to_string()) });
-    commands.push(CommandInfo { name: "printf".to_string(), description: Some("(builtin) Formatted output".to_string()) });
-    commands.push(CommandInfo { name: "env".to_string(), description: Some("(builtin) Print or modify environment".to_string()) });
-    commands.push(CommandInfo { name: "alias".to_string(), description: Some("(builtin) Define command aliases".to_string()) });
-    commands.push(CommandInfo { name: "unalias".to_string(), description: Some("(builtin) Remove command aliases".to_string()) });
-    commands.push(CommandInfo { name: "type".to_string(), description: Some("(builtin) Locate a command".to_string()) });
-    commands.push(CommandInfo { name: "which".to_string(), description: Some("(builtin) Locate a command".to_string()) });
-    commands.push(CommandInfo { name: "history".to_string(), description: Some("(builtin) Display command history".to_string()) });
-    commands.push(CommandInfo { name: "source".to_string(), description: Some("(builtin) Execute commands from file".to_string()) });
-    commands.push(CommandInfo { name: "read".to_string(), description: Some("(builtin) Read input into variable".to_string()) });
-    commands.push(CommandInfo { name: "test".to_string(), description: Some("(builtin) Evaluate expressions".to_string()) });
-    commands.push(CommandInfo { name: "true".to_string(), description: Some("(builtin) Return success".to_string()) });
-    commands.push(CommandInfo { name: "false".to_string(), description: Some("(builtin) Return failure".to_string()) });
-    commands.push(CommandInfo { name: "printenv".to_string(), description: Some("(builtin) Print environment variables".to_string()) });
-    commands.push(CommandInfo { name: "pushd".to_string(), description: Some("(builtin) Push directory onto stack".to_string()) });
-    commands.push(CommandInfo { name: "popd".to_string(), description: Some("(builtin) Pop directory from stack".to_string()) });
-    commands.push(CommandInfo { name: "set".to_string(), description: Some("(builtin) Set shell options".to_string()) });
-    commands.push(CommandInfo { name: "jobs".to_string(), description: Some("(builtin) List background jobs".to_string()) });
-    commands.push(CommandInfo { name: "fg".to_string(), description: Some("(builtin) Bring job to foreground".to_string()) });
-    commands.push(CommandInfo { name: "bg".to_string(), description: Some("(builtin) Resume job in background".to_string()) });
-    commands.push(CommandInfo { name: "dirs".to_string(), description: Some("(builtin) Display directory stack".to_string()) });
-    commands.push(CommandInfo { name: "wait".to_string(), description: Some("(builtin) Wait for background jobs".to_string()) });
-    commands.push(CommandInfo { name: "expr".to_string(), description: Some("(builtin) Evaluate expressions".to_string()) });
-    commands.push(CommandInfo { name: "umask".to_string(), description: Some("(builtin) Set file creation mask".to_string()) });
+    for builtin in builtins::BuiltinCommand::all() {
+        let desc = format!("(builtin) {}", builtin.description());
+        commands.push(CommandInfo { name: builtin.name().to_string(), description: Some(desc.clone()) });
+        for alias in builtin.aliases() {
+            commands.push(CommandInfo { name: alias.to_string(), description: Some(desc.clone()) });
+        }
+    }
 
     // Scripts
     for entry in script_registry::list_scripts() {

@@ -1395,32 +1395,12 @@ impl App {
             },
         }
 
-        let target = if base_cmd == "scripts" {
-            // Inject subcommands directly for the `scripts` builtin
-            self.help_cache.insert(
-                command_prefix,
-                vec![
-                    help_parser::CommandOption {
-                        name: "new".into(),
-                        description: Some("Create a new script from template".into()),
-                        kind: help_parser::OptionKind::Subcommand,
-                        args: None,
-                        default_value: None,
-                        possible_values: None,
-                    },
-                    help_parser::CommandOption {
-                        name: "reload".into(),
-                        description: Some("Reload all scripts".into()),
-                        kind: help_parser::OptionKind::Subcommand,
-                        args: None,
-                        default_value: None,
-                        possible_values: None,
-                    },
-                ],
-            );
-            self.refresh_autocomplete();
-            return;
-        } else if shell::builtins::lookup(base_cmd).is_some() {
+        let target = if let Some(builtin) = shell::builtins::lookup(base_cmd) {
+            let options = builtin.help_options();
+            if !options.is_empty() {
+                self.help_cache.insert(command_prefix, options);
+                self.refresh_autocomplete();
+            }
             return;
         } else if let Some(entry) = shell::script_registry::find_script(base_cmd) {
             let bun_path = match shell::path_resolver::find_in_path("bun") {

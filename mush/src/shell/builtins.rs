@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use super::help_parser::{CommandOption, OptionKind};
+
 static DIR_STACK: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 static SHELL_OPTIONS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
@@ -36,6 +38,274 @@ pub enum BuiltinCommand {
     Wait,
     Expr,
     Umask,
+}
+
+impl BuiltinCommand {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Cd => "cd",
+            Self::Clear => "clear",
+            Self::Exit => "exit",
+            Self::Scripts => "scripts",
+            Self::Pwd => "pwd",
+            Self::Export => "export",
+            Self::Unset => "unset",
+            Self::Printf => "printf",
+            Self::Env => "env",
+            Self::Alias => "alias",
+            Self::Unalias => "unalias",
+            Self::Type => "type",
+            Self::History => "history",
+            Self::Source => "source",
+            Self::Read => "read",
+            Self::Test => "test",
+            Self::True => "true",
+            Self::False => "false",
+            Self::Printenv => "printenv",
+            Self::Pushd => "pushd",
+            Self::Popd => "popd",
+            Self::Set => "set",
+            Self::Jobs => "jobs",
+            Self::Fg => "fg",
+            Self::Bg => "bg",
+            Self::Dirs => "dirs",
+            Self::Wait => "wait",
+            Self::Expr => "expr",
+            Self::Umask => "umask",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Cd => "Change working directory",
+            Self::Clear => "Clear the terminal screen",
+            Self::Exit => "Exit the shell",
+            Self::Scripts => "Manage mush scripts",
+            Self::Pwd => "Print working directory",
+            Self::Export => "Set or list environment variables",
+            Self::Unset => "Remove environment variables",
+            Self::Printf => "Format and print data",
+            Self::Env => "Run command in modified environment",
+            Self::Alias => "Define or list aliases",
+            Self::Unalias => "Remove aliases",
+            Self::Type => "Show how a command would be interpreted",
+            Self::History => "Show command history",
+            Self::Source => "Execute commands from a file",
+            Self::Read => "Read input into a variable",
+            Self::Test => "Evaluate conditional expression",
+            Self::True => "Return true (exit code 0)",
+            Self::False => "Return false (exit code 1)",
+            Self::Printenv => "Print environment variables",
+            Self::Pushd => "Push directory onto stack",
+            Self::Popd => "Pop directory from stack",
+            Self::Set => "Set or list shell options",
+            Self::Jobs => "List background jobs",
+            Self::Fg => "Bring job to foreground",
+            Self::Bg => "Resume job in background",
+            Self::Dirs => "Show directory stack",
+            Self::Wait => "Wait for background jobs",
+            Self::Expr => "Evaluate expression",
+            Self::Umask => "Set file creation mask",
+        }
+    }
+
+    pub fn aliases(&self) -> &'static [&'static str] {
+        match self {
+            Self::Clear => &["cls"],
+            Self::Type => &["which"],
+            Self::Source => &["."],
+            Self::Test => &["["],
+            _ => &[],
+        }
+    }
+
+    pub fn all() -> &'static [BuiltinCommand] {
+        &[
+            Self::Cd, Self::Clear, Self::Exit, Self::Scripts, Self::Pwd,
+            Self::Export, Self::Unset, Self::Printf, Self::Env, Self::Alias,
+            Self::Unalias, Self::Type, Self::History, Self::Source, Self::Read,
+            Self::Test, Self::True, Self::False, Self::Printenv, Self::Pushd,
+            Self::Popd, Self::Set, Self::Jobs, Self::Fg, Self::Bg, Self::Dirs,
+            Self::Wait, Self::Expr, Self::Umask,
+        ]
+    }
+
+    pub fn help_options(&self) -> Vec<CommandOption> {
+        let flag = |name: &str, desc: &str| CommandOption {
+            name: name.into(),
+            description: Some(desc.into()),
+            kind: OptionKind::Flag,
+            args: None,
+            default_value: None,
+            possible_values: None,
+        };
+        let flag_arg = |name: &str, desc: &str, args: &str| CommandOption {
+            name: name.into(),
+            description: Some(desc.into()),
+            kind: OptionKind::Flag,
+            args: Some(args.into()),
+            default_value: None,
+            possible_values: None,
+        };
+        let sub = |name: &str, desc: &str| CommandOption {
+            name: name.into(),
+            description: Some(desc.into()),
+            kind: OptionKind::Subcommand,
+            args: None,
+            default_value: None,
+            possible_values: None,
+        };
+
+        match self {
+            Self::Cd => vec![
+                sub("~", "Home directory"),
+                sub("-", "Previous directory (OLDPWD)"),
+                sub("<directory>", "Directory to change to"),
+            ],
+            Self::Clear | Self::Exit | Self::True | Self::False => vec![],
+            Self::Scripts => vec![
+                sub("new", "Create a new script from template"),
+                sub("reload", "Reload all scripts"),
+            ],
+            Self::Pwd => vec![
+                flag("-P", "Print physical directory (resolve symlinks)"),
+            ],
+            Self::Export => vec![
+                flag("-p", "Print all exported variables"),
+                sub("<NAME=VALUE>", "Set and export environment variable"),
+            ],
+            Self::Unset => vec![
+                flag("-v", "Unset variable (default)"),
+                flag("-f", "Unset function"),
+                sub("<NAME>", "Variable name to unset"),
+            ],
+            Self::Printf => vec![
+                sub("<FORMAT>", "Format string (%s, %d, %f, %x, etc.)"),
+                sub("<ARGUMENTS>", "Values for format placeholders"),
+            ],
+            Self::Env => vec![
+                flag("-i", "Start with empty environment"),
+                flag_arg("-u", "Remove variable from environment", "<NAME>"),
+                sub("<NAME=VALUE>", "Set variable for command"),
+                sub("<COMMAND>", "Command to execute"),
+            ],
+            Self::Alias => vec![
+                sub("<name>=<value>", "Define alias"),
+                sub("<name>", "Show alias definition"),
+            ],
+            Self::Unalias => vec![
+                flag("-a", "Remove all aliases"),
+                sub("<name>", "Alias name to remove"),
+            ],
+            Self::Type => vec![
+                flag("-a", "Show all locations, not just the first"),
+                flag("-t", "Print only the type (builtin, alias, file, script)"),
+                sub("<name>", "Command name to look up"),
+            ],
+            Self::History => vec![
+                flag("-c", "Clear history"),
+                sub("<N>", "Show last N entries"),
+            ],
+            Self::Source => vec![
+                sub("<FILE>", "Script file to execute"),
+            ],
+            Self::Read => vec![
+                flag_arg("-p", "Display prompt", "<PROMPT>"),
+                flag("-r", "Do not interpret backslash escapes"),
+                flag("-s", "Silent mode (do not echo input)"),
+                sub("<VAR>", "Variable name (default: REPLY)"),
+            ],
+            Self::Test => vec![
+                flag_arg("-e", "File exists", "<file>"),
+                flag_arg("-f", "File is a regular file", "<file>"),
+                flag_arg("-d", "File is a directory", "<file>"),
+                flag_arg("-L", "File is a symbolic link", "<file>"),
+                flag_arg("-r", "File is readable", "<file>"),
+                flag_arg("-w", "File is writable", "<file>"),
+                flag_arg("-x", "File is executable", "<file>"),
+                flag_arg("-s", "File is non-empty", "<file>"),
+                flag_arg("-z", "String is empty", "<string>"),
+                flag_arg("-n", "String is non-empty", "<string>"),
+                sub("=", "Strings are equal"),
+                sub("!=", "Strings are not equal"),
+                sub("-eq", "Integers are equal"),
+                sub("-ne", "Integers are not equal"),
+                sub("-lt", "Less than"),
+                sub("-gt", "Greater than"),
+            ],
+            Self::Printenv => vec![
+                sub("<NAME>", "Variable name to print"),
+            ],
+            Self::Pushd => vec![
+                sub("<directory>", "Push directory onto stack and cd to it"),
+            ],
+            Self::Popd => vec![],
+            Self::Set => vec![
+                flag("-e", "Exit on error (errexit)"),
+                flag("-u", "Treat unset variables as error (nounset)"),
+                flag("-x", "Print commands before execution (xtrace)"),
+                flag_arg("-o", "Set option by name", "<option>"),
+                flag_arg("+o", "Unset option by name", "<option>"),
+            ],
+            Self::Jobs => vec![
+                flag("-l", "List process IDs"),
+            ],
+            Self::Fg => vec![
+                sub("<%N>", "Job number to bring to foreground"),
+            ],
+            Self::Bg => vec![
+                sub("<%N>", "Job number to resume in background"),
+            ],
+            Self::Dirs => vec![
+                flag("-c", "Clear the directory stack"),
+                flag("-l", "Show full paths (no ~ abbreviation)"),
+                flag("-v", "Show stack with index numbers"),
+                flag("-p", "Show one entry per line"),
+            ],
+            Self::Wait => vec![
+                sub("<%N>", "Job number to wait for"),
+            ],
+            Self::Expr => vec![
+                sub("<EXPRESSION>", "Arithmetic or string expression"),
+            ],
+            Self::Umask => vec![
+                flag("-S", "Show in symbolic format"),
+                flag("-p", "Show in reusable format"),
+                sub("<MODE>", "Octal mode to set (e.g. 022)"),
+            ],
+        }
+    }
+
+    pub fn help_text(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        let name = self.name();
+        lines.push(format!("{name}: {}", self.description()));
+        lines.push(String::new());
+
+        let opts = self.help_options();
+        let flags: Vec<&CommandOption> = opts.iter().filter(|o| o.kind == OptionKind::Flag).collect();
+        let subcmds: Vec<&CommandOption> = opts.iter().filter(|o| o.kind == OptionKind::Subcommand).collect();
+
+        if !flags.is_empty() {
+            lines.push("Options:".into());
+            for opt in &flags {
+                let args_str = opt.args.as_deref().map(|a| format!(" {a}")).unwrap_or_default();
+                let desc = opt.description.as_deref().unwrap_or("");
+                lines.push(format!("  {}{args_str}    {desc}", opt.name));
+            }
+            lines.push(String::new());
+        }
+
+        if !subcmds.is_empty() {
+            lines.push("Arguments:".into());
+            for opt in &subcmds {
+                let desc = opt.description.as_deref().unwrap_or("");
+                lines.push(format!("  {}    {desc}", opt.name));
+            }
+        }
+
+        lines
+    }
 }
 
 pub struct BuiltinResult {
@@ -81,6 +351,14 @@ pub fn lookup(name: &str) -> Option<BuiltinCommand> {
 }
 
 pub fn execute(cmd: BuiltinCommand, args: &[String]) -> BuiltinResult {
+    // Intercept --help (skip for `test` where flags like -h have real meaning)
+    if !matches!(cmd, BuiltinCommand::Test)
+        && (args.iter().any(|a| a == "--help")
+            || (args.len() == 1 && (args[0] == "-h" || args[0] == "-?")))
+    {
+        return ok(cmd.help_text());
+    }
+
     match cmd {
         BuiltinCommand::Cd => execute_cd(args),
         BuiltinCommand::Clear => ok(Vec::new()),
