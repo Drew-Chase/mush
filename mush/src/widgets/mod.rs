@@ -365,6 +365,14 @@ impl App {
                         self.input.notify(msg.to_string());
                     }
 
+                    // Ctrl+O opens current directory in system file explorer
+                    (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+                        let cwd = std::env::current_dir().unwrap_or_default();
+                        if let Err(e) = open::that(&cwd) {
+                            self.input.notify(format!("Failed to open explorer: {e}"));
+                        }
+                    }
+
                     // Ctrl+R toggles history popover
                     (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
                         if self.history_popover.visible {
