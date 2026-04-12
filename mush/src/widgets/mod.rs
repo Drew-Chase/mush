@@ -1239,16 +1239,22 @@ impl App {
             let tokens = shell::tokenize(&input);
             let ends_with_space = input.ends_with(' ');
 
-            let (prefix_tokens, partial) = if ends_with_space {
-                (tokens.as_slice(), String::new())
+            let partial = if ends_with_space {
+                String::new()
             } else if tokens.len() > 1 {
-                (&tokens[..tokens.len() - 1], tokens[tokens.len() - 1].clone())
+                tokens[tokens.len() - 1].clone()
             } else {
                 self.autocomplete.update(&input);
                 return;
             };
 
-            let prefix = prefix_tokens.join(" ");
+            // Use the raw input to preserve original quoting (tokenize strips quotes)
+            let prefix = if ends_with_space {
+                input.trim_end().to_string()
+            } else {
+                let start = find_last_token_start(&input);
+                input[..start].trim_end().to_string()
+            };
 
             if !prefix.is_empty() {
                 // Check if the partial token looks like a path
@@ -1735,6 +1741,43 @@ fn decode_output(bytes: Vec<u8>) -> String {
     }
 
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Finds the byte offset where the last shell token begins in the input.
+/// Handles quoted tokens (double, single, backtick) and backslash-escaped spaces.
+fn find_last_token_start(input: &str) -> usize {
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    if len == 0 {
+        return 0;
+    }
+
+    // Skip trailing whitespace
+    let mut pos = len;
+    while pos > 0 && bytes[pos - 1].is_ascii_whitespace() {
+        pos -= 1;
+    }
+
+    if pos == 0 {
+        return 0;
+    }
+
+    let last_byte = bytes[pos - 1];
+    if last_byte == b'"' || last_byte == b'\'' || last_byte == b'`' {
+        // Quoted token: find matching opening quote
+        pos -= 1;
+        while pos > 0 && bytes[pos - 1] != last_byte {
+            pos -= 1;
+        }
+        pos = pos.saturating_sub(1); // include the opening quote
+    } else {
+        // Unquoted token: walk back to whitespace
+        while pos > 0 && !bytes[pos - 1].is_ascii_whitespace() {
+            pos -= 1;
+        }
+    }
+
+    pos
 }
 
 /// Finds the byte position of the last unquoted `|` that is not part of `||`.

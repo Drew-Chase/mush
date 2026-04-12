@@ -24,14 +24,16 @@ pub struct Autocomplete {
     pub selected: usize,
     pub visible: bool,
     current_prefix: Option<String>,
-    path_base: Option<String>,
+    path_cmd_prefix: Option<String>,
+    path_display_base: Option<String>,
     pipe_prefix: Option<String>,
 }
 
 impl Autocomplete {
     pub fn update(&mut self, input: &str) {
         self.current_prefix = None;
-        self.path_base = None;
+        self.path_cmd_prefix = None;
+        self.path_display_base = None;
 
         let query = input.split_whitespace().next().unwrap_or("");
 
@@ -76,7 +78,8 @@ impl Autocomplete {
         prefix: &str,
     ) {
         self.current_prefix = Some(prefix.to_string());
-        self.path_base = None;
+        self.path_cmd_prefix = None;
+        self.path_display_base = None;
 
         let options = match options {
             Some(opts) if !opts.is_empty() => opts,
@@ -138,8 +141,9 @@ impl Autocomplete {
 
         let (dir, file_prefix, display_base) = split_path(partial_path);
 
-        // Store base so accept() can reconstruct the full command + path
-        self.path_base = Some(format!("{command_prefix} {display_base}"));
+        // Store prefix and display base separately so accept() can quote only the new path
+        self.path_cmd_prefix = Some(command_prefix.to_string());
+        self.path_display_base = Some(display_base);
 
         let entries = match std::fs::read_dir(&dir) {
             Ok(rd) => rd,
@@ -209,8 +213,9 @@ impl Autocomplete {
 
         let (dir, file_prefix, display_base) = split_path(partial_path);
 
-        // path_base with no leading command — accept() will produce just the path
-        self.path_base = Some(display_base);
+        // No leading command — accept() will produce just the path
+        self.path_cmd_prefix = None;
+        self.path_display_base = Some(display_base);
 
         let entries = match std::fs::read_dir(&dir) {
             Ok(rd) => rd,
@@ -280,7 +285,8 @@ impl Autocomplete {
         full_prefix: &str,
     ) {
         self.current_prefix = None;
-        self.path_base = None;
+        self.path_cmd_prefix = None;
+        self.path_display_base = None;
         self.pipe_prefix = Some(full_prefix.to_string());
 
         let query_lower = partial.to_lowercase();
@@ -357,19 +363,17 @@ impl Autocomplete {
                 } else {
                     format!("{base} {name}")
                 }
-            } else if let Some(base) = &self.path_base {
-                let full = format!("{base}{name}");
-                // Find where the command prefix ends (first space) to isolate the path portion
-                if let Some(space_idx) = full.find(' ') {
-                    let cmd = &full[..space_idx];
-                    let path = &full[space_idx + 1..];
-                    if path.contains(' ') {
-                        format!("{cmd} \"{path}\"")
-                    } else {
-                        full
-                    }
+            } else if let Some(display_base) = &self.path_display_base {
+                let path = format!("{display_base}{name}");
+                let quoted_path = if path.contains(' ') {
+                    format!("\"{path}\"")
                 } else {
-                    full
+                    path
+                };
+                if let Some(prefix) = &self.path_cmd_prefix {
+                    format!("{prefix} {quoted_path}")
+                } else {
+                    quoted_path
                 }
             } else if let Some(prefix) = &self.current_prefix {
                 format!("{prefix} {name}")
@@ -388,7 +392,8 @@ impl Autocomplete {
         self.suggestions.clear();
         self.selected = 0;
         self.current_prefix = None;
-        self.path_base = None;
+        self.path_cmd_prefix = None;
+        self.path_display_base = None;
         self.pipe_prefix = None;
     }
 
