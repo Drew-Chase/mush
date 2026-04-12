@@ -44,6 +44,16 @@ pub fn resolve_command(input: &str) -> CommandKind {
         return CommandKind::Script(entry);
     }
 
+    // If the command contains a path separator, resolve it directly as a
+    // filesystem path (e.g. ./program, ../bin/tool, C:\Windows\notepad.exe).
+    // Don't fall through to PATH search — matches bash/zsh behavior.
+    if path_resolver::has_path_separator(name) {
+        if let Some(path) = path_resolver::resolve_direct_path(name) {
+            return CommandKind::External(path);
+        }
+        return CommandKind::NotFound;
+    }
+
     if let Some(path) = path_resolver::find_in_path(name) {
         return CommandKind::External(path);
     }
@@ -142,6 +152,10 @@ pub fn is_valid_command(input: &str) -> bool {
 
     if script_registry::is_script(name) {
         return true;
+    }
+
+    if path_resolver::has_path_separator(name) {
+        return path_resolver::resolve_direct_path(name).is_some();
     }
 
     path_resolver::is_executable(name)

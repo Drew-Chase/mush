@@ -741,6 +741,21 @@ fn execute_type(args: &[String]) -> BuiltinResult {
             }
         }
 
+        // Check direct path (contains separator like ./program or C:\path\to\exe)
+        if super::path_resolver::has_path_separator(arg)
+            && let Some(path) = super::path_resolver::resolve_direct_path(arg)
+        {
+            if type_only {
+                output.push("file".to_string());
+            } else {
+                output.push(format!("{arg} is {}", path.display()));
+            }
+            found = true;
+            if !show_all {
+                continue;
+            }
+        }
+
         // Check external
         if let Some(path) = super::path_resolver::find_in_path(arg) {
             if type_only {

@@ -76,8 +76,14 @@ fn search_path(name: &str) -> Option<PathBuf> {
 /// Returns the list of extensions to try when searching for an executable.
 /// On Windows, uses PATHEXT; on other platforms, returns empty (no extensions needed).
 fn get_extensions(name: &str) -> Vec<String> {
-    // If the name already has an extension, don't append more
-    if name.contains('.') {
+    // If the file name portion already has an extension, don't append more.
+    // We check only the file name to avoid false positives from path separators
+    // like the `.` in `./program`.
+    let file_name = std::path::Path::new(name)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or(name);
+    if file_name.contains('.') {
         return Vec::new();
     }
 
@@ -177,4 +183,44 @@ pub fn replace_executables(new_list: Vec<String>) {
     if let Ok(mut guard) = lock.write() {
         *guard = new_list;
     }
+}
+
+/// Returns `true` if the command name contains a path separator (`/` or `\`),
+/// indicating it should be resolved directly as a filesystem path.
+pub fn has_path_separator(name: &str) -> bool {
+    name.contains('/') || name.contains('\\')
+}
+
+/// Resolves a command name that contains a path separator (e.g. `./foo`,
+/// `../bar`, `/absolute/path`, `folder\program`) to an actual file path.
+///
+/// Relative paths are joined with the current working directory.
+/// On Windows, tries PATHEXT extensions if the name has no extension.
+/// Results are NOT cached because the working directory can change.
+pub fn resolve_direct_path(name: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(name);
+
+    let absolute = if path.is_relative() {
+        std::env::current_dir().ok()?.join(&path)
+    } else {
+        path
+    };
+
+    if absolute.is_file() {
+        return Some(absolute);
+    }
+
+    // On Windows, try PATHEXT extensions if name has no file extension
+    for ext in &get_extensions(name) {
+        let candidate = absolute.with_file_name(format!(
+            "{}{}",
+            absolute.file_name()?.to_str()?,
+            ext
+        ));
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
 }
