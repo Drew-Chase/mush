@@ -1,5 +1,5 @@
 use ratatui::crossterm::event::{
-    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
+    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::crossterm::{execute, event::{EnableMouseCapture, DisableMouseCapture, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags}};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -60,6 +60,12 @@ struct PendingHelpLookup {
 
 const MAX_PENDING_LOOKUPS: usize = 3;
 
+#[derive(Debug, Clone, Copy)]
+enum MouseDragOrigin {
+    Input,
+    History,
+}
+
 struct BackgroundJob {
     job_id: u32,
     command: String,
@@ -91,6 +97,8 @@ pub struct App {
     last_path_scan: Option<Instant>,
     interactive_mode: bool,
     pipe_output_cache: Option<(String, Vec<String>)>,
+    last_input_area: Rect,
+    mouse_drag_origin: Option<MouseDragOrigin>,
 }
 
 impl Drop for App {
@@ -219,6 +227,8 @@ impl App {
             last_path_scan: None,
             interactive_mode: false,
             pipe_output_cache: None,
+            last_input_area: Rect::default(),
+            mouse_drag_origin: None,
         })
     }
 
@@ -299,6 +309,7 @@ impl App {
         let input_area = chunks[3];
 
         self.last_history_area = history_area;
+        self.last_input_area = input_area;
 
         frame.render_widget(&mut self.history, history_area);
 
@@ -321,7 +332,13 @@ impl App {
                 if self.running_pipeline.is_some() {
                     match (key.modifiers, key.code) {
                         (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                            self.kill_running_command();
+                            if let Some(text) = self.history.selected_text() {
+                                clipboard_copy(&text);
+                                self.history.clear_selection();
+                                self.input.notify("Copied".to_string());
+                            } else {
+                                self.kill_running_command();
+                            }
                         }
                         (_, KeyCode::PageUp)
                         | (KeyModifiers::SHIFT, KeyCode::Up)
@@ -344,13 +361,67 @@ impl App {
                         self.exit = true;
                     }
 
-                    // Ctrl+C clears input
+                    // Ctrl+Shift+C always copies selection
+                    (m, KeyCode::Char('C'))
+                        if m == KeyModifiers::CONTROL | KeyModifiers::SHIFT =>
+                    {
+                        if let Some(text) = self.input.selected_text() {
+                            if clipboard_copy(&text) {
+                                self.input.notify("Copied".to_string());
+                            }
+                        } else if let Some(text) = self.history.selected_text() {
+                            if clipboard_copy(&text) {
+                                self.input.notify("Copied".to_string());
+                            }
+                            self.history.clear_selection();
+                        }
+                    }
+
+                    // Ctrl+X cuts selected text
+                    (KeyModifiers::CONTROL, KeyCode::Char('x')) => {
+                        if let Some(text) = self.input.selected_text()
+                            && clipboard_copy(&text)
+                        {
+                            self.input.delete_selection();
+                            self.on_input_changed();
+                            self.input.notify("Cut".to_string());
+                        }
+                    }
+
+                    // Ctrl+V pastes from clipboard
+                    (KeyModifiers::CONTROL, KeyCode::Char('v')) => {
+                        if let Some(text) = clipboard_get() {
+                            let text: String = text.lines().collect::<Vec<_>>().join(" ");
+                            if !text.is_empty() {
+                                if self.input.selection_range().is_some() {
+                                    self.input.delete_selection();
+                                }
+                                for c in text.chars() {
+                                    self.input.insert_char(c);
+                                }
+                                self.on_input_changed();
+                            }
+                        }
+                    }
+
+                    // Ctrl+C copies if selection exists, otherwise clears input
                     (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                        self.input.clear();
-                        self.autocomplete.close();
-                        self.history_popover.close();
-                        self.history_nav.reset();
-                        self.validate_input();
+                        if let Some(text) = self.input.selected_text() {
+                            if clipboard_copy(&text) {
+                                self.input.notify("Copied".to_string());
+                            }
+                        } else if let Some(text) = self.history.selected_text() {
+                            if clipboard_copy(&text) {
+                                self.input.notify("Copied".to_string());
+                            }
+                            self.history.clear_selection();
+                        } else {
+                            self.input.clear();
+                            self.autocomplete.close();
+                            self.history_popover.close();
+                            self.history_nav.reset();
+                            self.validate_input();
+                        }
                     }
 
                     // Ctrl+I toggles interactive mode
@@ -514,11 +585,55 @@ impl App {
                     _ => {}
                 }
             }
-            Event::Mouse(mouse) => match mouse.kind {
-                MouseEventKind::ScrollUp => self.history_scroll_up(),
-                MouseEventKind::ScrollDown => self.history_scroll_down(),
-                _ => {}
-            },
+            Event::Mouse(mouse) => {
+                let col = mouse.column;
+                let row = mouse.row;
+
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.history_scroll_up(),
+                    MouseEventKind::ScrollDown => self.history_scroll_down(),
+
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if let Some(text_col) = self.screen_to_input_column(col, row) {
+                            self.mouse_drag_origin = Some(MouseDragOrigin::Input);
+                            self.history.clear_selection();
+                            self.input.clear_selection();
+                            self.input.set_cursor_to_column(text_col);
+                        } else if let Some((canvas_row, canvas_col)) =
+                            self.screen_to_history_canvas(col, row)
+                        {
+                            self.mouse_drag_origin = Some(MouseDragOrigin::History);
+                            self.input.clear_selection();
+                            self.history.start_selection(canvas_row, canvas_col);
+                        } else {
+                            self.mouse_drag_origin = None;
+                        }
+                    }
+
+                    MouseEventKind::Drag(MouseButton::Left) => match self.mouse_drag_origin {
+                        Some(MouseDragOrigin::Input) => {
+                            if let Some(text_col) = self.screen_to_input_column(col, row) {
+                                self.input.start_selection();
+                                self.input.set_cursor_to_column(text_col);
+                            }
+                        }
+                        Some(MouseDragOrigin::History) => {
+                            if let Some((canvas_row, canvas_col)) =
+                                self.screen_to_history_canvas(col, row)
+                            {
+                                self.history.update_selection(canvas_row, canvas_col);
+                            }
+                        }
+                        None => {}
+                    },
+
+                    MouseEventKind::Up(MouseButton::Left) => {
+                        self.mouse_drag_origin = None;
+                    }
+
+                    _ => {}
+                }
+            }
             _ => {}
         }
 
@@ -1762,6 +1877,68 @@ impl App {
     fn history_scroll_down(&mut self) {
         self.history.scroll_down(3);
     }
+
+    /// Maps absolute screen coordinates to a visible text column in the command input.
+    fn screen_to_input_column(&self, screen_col: u16, screen_row: u16) -> Option<usize> {
+        let area = self.last_input_area;
+        // Content is at row area.y + 1 (top border), cols area.x + 2 .. area.x + width - 2
+        let content_row = area.y + 1;
+        let content_x_start = area.x + 2; // border(1) + padding(1)
+        let content_x_end = area.x + area.width.saturating_sub(2);
+
+        if screen_row != content_row || screen_col < content_x_start || screen_col >= content_x_end {
+            return None;
+        }
+        Some((screen_col - content_x_start) as usize)
+    }
+
+    /// Maps absolute screen coordinates to canvas (row, col) in the history widget.
+    fn screen_to_history_canvas(&self, screen_col: u16, screen_row: u16) -> Option<(u16, u16)> {
+        let area = self.last_history_area;
+        if screen_col < area.x || screen_col >= area.x + area.width
+            || screen_row < area.y || screen_row >= area.y + area.height
+        {
+            return None;
+        }
+
+        let total = self.history.total_content_height(area.width);
+        if total == 0 {
+            return None;
+        }
+
+        let canvas_start = if total <= area.height {
+            0u16
+        } else {
+            total - area.height - self.history.scroll_offset
+        };
+
+        let dest_y_start = if total < area.height {
+            area.y + area.height - total
+        } else {
+            area.y
+        };
+
+        let viewport_height = area.height.min(total);
+        if screen_row < dest_y_start || screen_row >= dest_y_start + viewport_height {
+            return None;
+        }
+
+        let canvas_row = canvas_start + (screen_row - dest_y_start);
+        let canvas_col = screen_col - area.x;
+        Some((canvas_row, canvas_col))
+    }
+}
+
+fn clipboard_copy(text: &str) -> bool {
+    arboard::Clipboard::new()
+        .and_then(|mut cb| cb.set_text(text))
+        .is_ok()
+}
+
+fn clipboard_get() -> Option<String> {
+    arboard::Clipboard::new()
+        .and_then(|mut cb| cb.get_text())
+        .ok()
 }
 
 fn compute_help_hash(text: &str) -> String {

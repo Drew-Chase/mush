@@ -78,6 +78,24 @@ impl CommandInput {
         self.cursor = self.buffer.len();
     }
 
+    /// Returns the currently selected text, or None if no selection.
+    pub fn selected_text(&self) -> Option<String> {
+        self.selection_range()
+            .map(|(start, end)| self.buffer[start..end].to_string())
+    }
+
+    /// Set cursor to the byte offset corresponding to a visible column position.
+    pub fn set_cursor_to_column(&mut self, col: usize) {
+        let mut byte_offset = 0;
+        for (visible_col, ch) in self.buffer.chars().enumerate() {
+            if visible_col >= col {
+                break;
+            }
+            byte_offset += ch.len_utf8();
+        }
+        self.cursor = byte_offset.min(self.buffer.len());
+    }
+
     pub fn insert_char(&mut self, c: char) {
         if self.selection_range().is_some() {
             self.delete_selection();

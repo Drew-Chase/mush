@@ -412,11 +412,19 @@ impl LiveOutputBuffer {
     }
 }
 
+const SELECTION_BG: Color = Color::Indexed(24);
+
 #[derive(Debug, Default)]
 pub struct CommandHistory {
     pub entries: Vec<CommandEntry>,
     pub scroll_offset: u16,
     pub live_entry: Option<LiveRenderData>,
+    /// Mouse selection anchor in canvas coordinates (row, col).
+    selection_anchor: Option<(u16, u16)>,
+    /// Mouse selection current position in canvas coordinates (row, col).
+    selection_current: Option<(u16, u16)>,
+    /// Last rendered off-screen canvas (for text extraction on copy).
+    last_canvas: Option<Buffer>,
 }
 
 impl CommandHistory {
@@ -460,6 +468,67 @@ impl CommandHistory {
 
     pub fn add_entry(&mut self, entry: CommandEntry) {
         self.entries.push(entry);
+    }
+
+    pub fn start_selection(&mut self, row: u16, col: u16) {
+        self.selection_anchor = Some((row, col));
+        self.selection_current = Some((row, col));
+    }
+
+    pub fn update_selection(&mut self, row: u16, col: u16) {
+        self.selection_current = Some((row, col));
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+        self.selection_current = None;
+    }
+
+    /// Returns ordered ((start_row, start_col), (end_row, end_col)) or None.
+    pub fn selection_range(&self) -> Option<((u16, u16), (u16, u16))> {
+        let anchor = self.selection_anchor?;
+        let current = self.selection_current?;
+        if anchor == current {
+            return None;
+        }
+        let (start, end) = if anchor.0 < current.0 || (anchor.0 == current.0 && anchor.1 <= current.1) {
+            (anchor, current)
+        } else {
+            (current, anchor)
+        };
+        Some((start, end))
+    }
+
+    /// Extracts the plain text within the selection from the canvas.
+    /// This works by walking the off-screen canvas buffer that was rendered.
+    pub fn selected_text_from_canvas(&self, canvas: &Buffer, width: u16) -> Option<String> {
+        let ((start_row, start_col), (end_row, end_col)) = self.selection_range()?;
+        let mut result = String::new();
+
+        for row in start_row..=end_row {
+            let col_begin = if row == start_row { start_col } else { 0 };
+            let col_end = if row == end_row { end_col } else { width };
+
+            let mut line = String::new();
+            for col in col_begin..col_end {
+                if let Some(cell) = canvas.cell((col, row)) {
+                    line.push_str(cell.symbol());
+                }
+            }
+            let trimmed = line.trim_end();
+            if !result.is_empty() {
+                result.push('\n');
+            }
+            result.push_str(trimmed);
+        }
+
+        if result.is_empty() { None } else { Some(result) }
+    }
+
+    /// Returns the selected text using the last rendered canvas.
+    pub fn selected_text(&self) -> Option<String> {
+        let canvas = self.last_canvas.as_ref()?;
+        self.selected_text_from_canvas(canvas, canvas.area.width)
     }
 }
 
@@ -545,6 +614,26 @@ impl Widget for &mut CommandHistory {
                 }
             }
         }
+
+        // Apply selection highlight
+        if let Some(((start_row, start_col), (end_row, end_col))) = self.selection_range() {
+            for canvas_row in start_row..=end_row {
+                if canvas_row < canvas_start || canvas_row >= canvas_start + viewport_height {
+                    continue;
+                }
+                let screen_row = dest_y_start + (canvas_row - canvas_start);
+                let col_start = if canvas_row == start_row { start_col } else { 0 };
+                let col_end = if canvas_row == end_row { end_col } else { area.width };
+                for col in col_start..col_end {
+                    if let Some(cell) = buf.cell_mut((area.x + col, screen_row)) {
+                        cell.set_bg(SELECTION_BG);
+                    }
+                }
+            }
+        }
+
+        // Store canvas for text extraction on copy
+        self.last_canvas = Some(canvas);
     }
 }
 
