@@ -1,11 +1,14 @@
 use std::io::Cursor;
 
+use clap::Parser;
+
 use tr::cli::TrConfig;
 use tr::ops::{expand_set, translate};
 
 fn parse(args: &[&str]) -> TrConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    TrConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["tr"];
+    full.extend_from_slice(args);
+    TrConfig::parse_from(full)
 }
 
 fn run_tr(args: &[&str], input: &str) -> String {
@@ -143,18 +146,6 @@ fn truncate_set1() {
 }
 
 // --- CLI parsing tests ---
-
-#[test]
-fn help_returns_none() {
-    let owned: Vec<String> = vec!["--help".to_string()];
-    assert!(TrConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned: Vec<String> = vec!["--version".to_string()];
-    assert!(TrConfig::from_args(&owned).is_none());
-}
 
 #[test]
 fn parse_combined_flags() {

@@ -1,15 +1,13 @@
 use std::io;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use tr::cli::TrConfig;
 use tr::ops;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = TrConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = TrConfig::parse();
 
     let stdin = io::stdin();
     let stdout = io::stdout();

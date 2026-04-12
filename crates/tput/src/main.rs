@@ -1,20 +1,23 @@
 use std::io;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use tput::cli::TputConfig;
 use tput::ops::execute_capability;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut config = TputConfig::parse();
 
-    let Some(config) = TputConfig::from_args(&args) else {
+    if let Err(e) = config.resolve() {
+        eprintln!("tput: {e}");
         return ExitCode::FAILURE;
-    };
+    }
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    if let Err(e) = execute_capability(&config.capability, &mut out) {
+    if let Err(e) = execute_capability(config.get_capability(), &mut out) {
         eprintln!("tput: {e}");
         return ExitCode::FAILURE;
     }

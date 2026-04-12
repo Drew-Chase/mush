@@ -3,15 +3,13 @@ use std::io::{self, BufReader};
 use std::path::Path;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use grep::cli::GrepConfig;
 use grep::ops::{build_regex, grep_reader, grep_recursive, GrepResult};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = GrepConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = GrepConfig::parse();
 
     let re = match build_regex(&config) {
         Ok(r) => r,

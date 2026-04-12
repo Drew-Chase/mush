@@ -2,15 +2,13 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use tree::cli::TreeConfig;
 use tree::ops::print_tree;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = TreeConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = TreeConfig::parse();
 
     let paths = if config.paths.is_empty() {
         vec![".".to_string()]

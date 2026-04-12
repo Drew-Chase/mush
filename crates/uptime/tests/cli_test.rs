@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use uptime::cli::UptimeConfig;
 
 fn parse(args: &[&str]) -> UptimeConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    UptimeConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["uptime"];
+    full.extend_from_slice(args);
+    UptimeConfig::parse_from(full)
 }
 
 #[test]
@@ -34,18 +37,6 @@ fn flag_s_since() {
 fn long_since() {
     let config = parse(&["--since"]);
     assert!(config.since);
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(UptimeConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(UptimeConfig::from_args(&owned).is_none());
 }
 
 #[test]

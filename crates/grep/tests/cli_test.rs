@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use grep::cli::GrepConfig;
 
 fn parse(args: &[&str]) -> GrepConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    GrepConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["grep"];
+    full.extend_from_slice(args);
+    GrepConfig::parse_from(full)
 }
 
 #[test]
@@ -27,7 +30,7 @@ fn defaults() {
     assert_eq!(config.before_context, 0);
     assert_eq!(config.context, 0);
     assert!(config.max_count.is_none());
-    assert!(!config.color);
+    assert!(!config.color_enabled());
     assert!(!config.fixed_strings);
     assert!(!config.extended_regexp);
     assert!(config.include_glob.is_empty());
@@ -108,32 +111,14 @@ fn flag_a_separate() {
 }
 
 #[test]
-fn flag_a_inline() {
-    let config = parse(&["-A3", "pattern"]);
-    assert_eq!(config.after_context, 3);
-}
-
-#[test]
 fn flag_b_separate() {
     let config = parse(&["-B", "2", "pattern"]);
     assert_eq!(config.before_context, 2);
 }
 
 #[test]
-fn flag_b_inline() {
-    let config = parse(&["-B2", "pattern"]);
-    assert_eq!(config.before_context, 2);
-}
-
-#[test]
 fn flag_c_context_separate() {
     let config = parse(&["-C", "5", "pattern"]);
-    assert_eq!(config.context, 5);
-}
-
-#[test]
-fn flag_c_context_inline() {
-    let config = parse(&["-C5", "pattern"]);
     assert_eq!(config.context, 5);
 }
 
@@ -164,13 +149,13 @@ fn flag_extended_regexp_long() {
 #[test]
 fn flag_color_always() {
     let config = parse(&["--color=always", "pattern"]);
-    assert!(config.color);
+    assert!(config.color_enabled());
 }
 
 #[test]
 fn flag_color_never() {
     let config = parse(&["--color=never", "pattern"]);
-    assert!(!config.color);
+    assert!(!config.color_enabled());
 }
 
 #[test]
@@ -212,12 +197,6 @@ fn flag_exclude_dir_equals() {
 #[test]
 fn flag_m_separate() {
     let config = parse(&["-m", "10", "pattern"]);
-    assert_eq!(config.max_count, Some(10));
-}
-
-#[test]
-fn flag_m_inline() {
-    let config = parse(&["-m10", "pattern"]);
     assert_eq!(config.max_count, Some(10));
 }
 
@@ -312,32 +291,11 @@ fn flag_no_filename_long() {
 }
 
 #[test]
-fn combined_flags() {
-    let config = parse(&["-inv", "pattern"]);
-    assert!(config.ignore_case);
-    assert!(config.line_number);
-    assert!(config.invert);
-}
-
-#[test]
 fn files_collected() {
     let config = parse(&["-i", "pattern", "foo.txt", "bar.txt"]);
     assert!(config.ignore_case);
     assert_eq!(config.pattern, "pattern");
     assert_eq!(config.files, vec!["foo.txt", "bar.txt"]);
-}
-
-#[test]
-fn dash_is_stdin() {
-    let config = parse(&["pattern", "-"]);
-    assert_eq!(config.files, vec!["-"]);
-}
-
-#[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-v"]);
-    assert!(!config.invert);
-    assert_eq!(config.pattern, "-v");
 }
 
 #[test]

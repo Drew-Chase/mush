@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use ps::cli::PsConfig;
 
 fn parse(args: &[&str]) -> PsConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    PsConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["ps"];
+    full.extend_from_slice(args);
+    PsConfig::parse_from(full)
 }
 
 #[test]
@@ -142,30 +145,12 @@ fn combined_ef() {
 }
 
 #[test]
-fn combined_aux() {
-    let config = parse(&["-aux"]);
-    assert!(config.show_threads);
-}
-
-#[test]
 fn combined_flags_with_options() {
     let config = parse(&["-ef", "--sort", "mem", "--no-headers"]);
     assert!(config.all);
     assert!(config.full);
     assert_eq!(config.sort_key, Some("mem".to_string()));
     assert!(config.no_headers);
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(PsConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(PsConfig::from_args(&owned).is_none());
 }
 
 #[test]

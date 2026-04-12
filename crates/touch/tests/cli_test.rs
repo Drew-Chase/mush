@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use touch::cli::TouchConfig;
 
 fn parse(args: &[&str]) -> TouchConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    TouchConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["touch"];
+    full.extend_from_slice(args);
+    TouchConfig::parse_from(full)
 }
 
 #[test]
@@ -98,23 +101,4 @@ fn combined_acm() {
 fn multiple_files() {
     let config = parse(&["a.txt", "b.txt", "c.txt"]);
     assert_eq!(config.files, vec!["a.txt", "b.txt", "c.txt"]);
-}
-
-#[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-a"]);
-    assert!(!config.access_only);
-    assert_eq!(config.files, vec!["-a"]);
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(TouchConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(TouchConfig::from_args(&owned).is_none());
 }

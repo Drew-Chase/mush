@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use file::cli::FileConfig;
 use file::ops::detect_file_type;
 
 fn parse(args: &[&str]) -> FileConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    FileConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["file"];
+    full.extend_from_slice(args);
+    FileConfig::parse_from(full)
 }
 
 #[test]
@@ -68,24 +71,6 @@ fn combined_flags() {
     assert!(config.brief);
     assert!(config.mime);
     assert!(config.dereference);
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(FileConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(FileConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn missing_operand_returns_none() {
-    let owned: Vec<String> = vec![];
-    assert!(FileConfig::from_args(&owned).is_none());
 }
 
 #[test]

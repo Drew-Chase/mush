@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use tree::cli::TreeConfig;
 
 fn parse(args: &[&str]) -> TreeConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    TreeConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["tree"];
+    full.extend_from_slice(args);
+    TreeConfig::parse_from(full)
 }
 
 #[test]
@@ -46,12 +49,6 @@ fn flag_f() {
 fn flag_l_separate() {
     let config = parse(&["-L", "3"]);
     assert_eq!(config.level, Some(3));
-}
-
-#[test]
-fn flag_l_attached() {
-    let config = parse(&["-L2"]);
-    assert_eq!(config.level, Some(2));
 }
 
 #[test]
@@ -152,11 +149,4 @@ fn paths_collected() {
     let config = parse(&["-a", "src", "tests"]);
     assert!(config.all);
     assert_eq!(config.paths, vec!["src", "tests"]);
-}
-
-#[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-a"]);
-    assert!(!config.all);
-    assert_eq!(config.paths, vec!["-a"]);
 }

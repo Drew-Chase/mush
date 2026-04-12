@@ -1,15 +1,19 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use touch::cli::TouchConfig;
 use touch::ops::touch;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let config = TouchConfig::parse();
 
-    let Some(config) = TouchConfig::from_args(&args) else {
+    if config.files.is_empty() {
+        eprintln!("touch: missing file operand");
+        eprintln!("Try 'touch --help' for more information.");
         return ExitCode::SUCCESS;
-    };
+    }
 
     let mut exit_code = 0u8;
 

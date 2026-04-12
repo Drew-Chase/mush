@@ -247,7 +247,7 @@ fn print_line(
         prefix.push(sep);
     }
 
-    if config.color && !config.invert {
+    if config.color_enabled() && !config.invert {
         let colored = colorize_matches(re, line_content);
         let _ = writeln!(writer, "{prefix}{colored}");
     } else {
@@ -275,7 +275,7 @@ fn print_match_only(
         prefix.push(':');
     }
 
-    if config.color {
+    if config.color_enabled() {
         let _ = writeln!(writer, "{prefix}\x1b[1;31m{matched}\x1b[0m");
     } else {
         let _ = writeln!(writer, "{prefix}{matched}");

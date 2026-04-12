@@ -1,22 +1,4 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-const HELP_TEXT: &str = "\
-Usage: tput CAPABILITY [PARAMS]
-Query terminal capabilities.
-
-Capabilities:
-  cols           number of columns
-  lines          number of lines
-  colors         number of colors
-  bold           turn on bold
-  sgr0           turn off all attributes
-  setaf COLOR    set foreground color
-  clear          clear screen
-  cup ROW COL    move cursor to position
-
-Options:
-  -V, --version  output version information and exit
-  -h, --help     display this help and exit";
+use clap::Parser;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TputCapability {
@@ -30,53 +12,53 @@ pub enum TputCapability {
     Cup(u16, u16),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[command(name = "tput", about = "Query terminal capabilities", version, disable_help_flag = true)]
 pub struct TputConfig {
-    pub capability: TputCapability,
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    #[arg(required = true, help = "Capability name and optional parameters")]
+    pub args: Vec<String>,
+
+    #[clap(skip)]
+    pub capability: Option<TputCapability>,
 }
 
 impl TputConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        if args.is_empty() {
-            eprintln!("tput: missing capability name");
-            return None;
+    pub fn resolve(&mut self) -> Result<(), String> {
+        if self.args.is_empty() {
+            return Err("missing capability name".to_string());
         }
 
-        let first = &args[0];
-
-        if first == "--help" || first == "-h" {
-            println!("{HELP_TEXT}");
-            return None;
-        }
-        if first == "--version" || first == "-V" {
-            println!("tput {VERSION}");
-            return None;
-        }
-
-        let capability = match first.as_str() {
+        let capability = match self.args[0].as_str() {
             "cols" => TputCapability::Cols,
             "lines" => TputCapability::Lines,
             "colors" => TputCapability::Colors,
             "bold" => TputCapability::Bold,
             "sgr0" => TputCapability::Sgr0,
             "setaf" => {
-                let color: u8 = args.get(1)
+                let color: u8 = self.args.get(1)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
                 TputCapability::Setaf(color)
             }
             "clear" => TputCapability::Clear,
             "cup" => {
-                let row: u16 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-                let col: u16 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let row: u16 = self.args.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let col: u16 = self.args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
                 TputCapability::Cup(row, col)
             }
             other => {
-                eprintln!("tput: unknown capability '{other}'");
-                return None;
+                return Err(format!("unknown capability '{other}'"));
             }
         };
 
-        Some(TputConfig { capability })
+        self.capability = Some(capability);
+        Ok(())
+    }
+
+    pub fn get_capability(&self) -> &TputCapability {
+        self.capability.as_ref().expect("resolve() must be called first")
     }
 }

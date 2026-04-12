@@ -1,15 +1,13 @@
 use std::fs;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use diff::cli::DiffConfig;
 use diff::ops::{compute_diff, format_normal, format_side_by_side, format_unified};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = DiffConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = DiffConfig::parse();
 
     let content1 = match fs::read_to_string(&config.file1) {
         Ok(c) => c,
