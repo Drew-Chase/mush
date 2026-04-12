@@ -27,6 +27,8 @@ pub struct Autocomplete {
     path_cmd_prefix: Option<String>,
     path_display_base: Option<String>,
     pipe_prefix: Option<String>,
+    /// Text after the token being autocompleted (preserved for cursor-relative completion).
+    suffix_after_token: Option<String>,
 }
 
 impl Autocomplete {
@@ -354,7 +356,13 @@ impl Autocomplete {
         }
     }
 
-    pub fn accept(&mut self) -> Option<String> {
+    /// Set the suffix text that follows the token being autocompleted.
+    pub fn set_suffix(&mut self, suffix: String) {
+        self.suffix_after_token = Some(suffix);
+    }
+
+    /// Accept the current suggestion. Returns `(full_line, cursor_position)`.
+    pub fn accept(&mut self) -> Option<(String, usize)> {
         if self.visible && self.selected < self.suggestions.len() {
             let name = &self.suggestions[self.selected].name;
             let result = if let Some(base) = &self.pipe_prefix {
@@ -380,8 +388,11 @@ impl Autocomplete {
             } else {
                 name.clone()
             };
+            let cursor_pos = result.len();
+            let suffix = self.suffix_after_token.take().unwrap_or_default();
+            let full_line = format!("{result}{suffix}");
             self.close();
-            Some(result)
+            Some((full_line, cursor_pos))
         } else {
             None
         }
@@ -395,6 +406,7 @@ impl Autocomplete {
         self.path_cmd_prefix = None;
         self.path_display_base = None;
         self.pipe_prefix = None;
+        self.suffix_after_token = None;
     }
 
     pub fn popup_height(&self) -> u16 {

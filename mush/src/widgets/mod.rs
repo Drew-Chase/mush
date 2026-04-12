@@ -413,9 +413,10 @@ impl App {
                         self.autocomplete.close();
                     }
                     (_, KeyCode::Tab) => {
-                        if let Some(accepted) = self.autocomplete.accept() {
+                        if let Some((accepted, new_cursor)) = self.autocomplete.accept() {
                             self.input.buffer = accepted;
-                            self.input.cursor = self.input.buffer.len();
+                            self.input.cursor = new_cursor;
+                            self.input.clear_selection();
                             self.validate_input();
                             self.on_input_changed();
                         }
@@ -1206,11 +1207,14 @@ impl App {
         self.validate_input();
 
         let input = self.input.buffer.clone();
+        let cursor = self.input.cursor.min(input.len());
+        let input_to_cursor = &input[..cursor];
+        let suffix = &input[cursor..];
 
         // --- Pipe-aware autocomplete ---
-        if let Some(pipe_pos) = find_last_pipe_pos(&input) {
-            let preceding = input[..pipe_pos].trim().to_string();
-            let after_pipe = &input[pipe_pos + 1..];
+        if let Some(pipe_pos) = find_last_pipe_pos(input_to_cursor) {
+            let preceding = input_to_cursor[..pipe_pos].trim().to_string();
+            let after_pipe = &input_to_cursor[pipe_pos + 1..];
             let after_trimmed = after_pipe.trim_start();
 
             if after_trimmed.is_empty() {
@@ -1228,6 +1232,7 @@ impl App {
                 // User is still typing the command name after the pipe (e.g., "ps | gr")
                 self.pipe_output_cache = None;
                 self.autocomplete.update(after_trimmed);
+                self.autocomplete.set_suffix(suffix.to_string());
                 return;
             }
 
@@ -1242,9 +1247,11 @@ impl App {
 
             // Build full_prefix: everything up to (but not including) the filter partial
             let full_prefix = if filter_partial.is_empty() {
-                input.trim_end().to_string()
+                input_to_cursor.trim_end().to_string()
             } else {
-                input[..input.len() - filter_partial.len()].trim_end().to_string()
+                input_to_cursor[..input_to_cursor.len() - filter_partial.len()]
+                    .trim_end()
+                    .to_string()
             };
 
             // Check cache or execute the preceding pipeline
@@ -1264,39 +1271,42 @@ impl App {
 
             self.autocomplete
                 .update_with_pipe_output(&filter_partial, &output, &full_prefix);
+            self.autocomplete.set_suffix(suffix.to_string());
             return;
         }
 
         // No pipe — clear pipe cache and proceed with normal autocomplete
         self.pipe_output_cache = None;
 
-        let has_space = input.contains(' ');
+        let has_space = input_to_cursor.contains(' ');
 
         if has_space {
-            let tokens = shell::tokenize(&input);
-            let ends_with_space = input.ends_with(' ');
+            let tokens = shell::tokenize(input_to_cursor);
+            let ends_with_space = input_to_cursor.ends_with(' ');
 
             let partial = if ends_with_space {
                 String::new()
             } else if tokens.len() > 1 {
                 tokens[tokens.len() - 1].clone()
             } else {
-                self.autocomplete.update(&input);
+                self.autocomplete.update(input_to_cursor);
+                self.autocomplete.set_suffix(suffix.to_string());
                 return;
             };
 
             // Use the raw input to preserve original quoting (tokenize strips quotes)
             let prefix = if ends_with_space {
-                input.trim_end().to_string()
+                input_to_cursor.trim_end().to_string()
             } else {
-                let start = find_last_token_start(&input);
-                input[..start].trim_end().to_string()
+                let start = find_last_token_start(input_to_cursor);
+                input_to_cursor[..start].trim_end().to_string()
             };
 
             if !prefix.is_empty() {
                 // Check if the partial token looks like a path
                 if autocomplete::is_path_like(&partial) {
                     self.autocomplete.update_with_paths(&partial, &prefix);
+                    self.autocomplete.set_suffix(suffix.to_string());
                     return;
                 }
 
@@ -1313,16 +1323,17 @@ impl App {
                 self.autocomplete
                     .update_with_help(&partial, self.help_cache.get(&prefix), &prefix);
             } else {
-                self.autocomplete.update(&input);
+                self.autocomplete.update(input_to_cursor);
             }
         } else {
             self.last_help_prefix = None;
-            if autocomplete::is_path_like(&input) {
-                self.autocomplete.update_with_paths_command(&input);
+            if autocomplete::is_path_like(input_to_cursor) {
+                self.autocomplete.update_with_paths_command(input_to_cursor);
             } else {
-                self.autocomplete.update(&input);
+                self.autocomplete.update(input_to_cursor);
             }
         }
+        self.autocomplete.set_suffix(suffix.to_string());
     }
 
     fn spawn_help_lookup(&mut self, command_prefix: String) {
