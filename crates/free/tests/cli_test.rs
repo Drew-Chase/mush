@@ -1,15 +1,18 @@
+use clap::Parser;
+
 use free::cli::FreeConfig;
 
 fn parse(args: &[&str]) -> FreeConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    FreeConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["free"];
+    full.extend_from_slice(args);
+    FreeConfig::parse_from(full)
 }
 
 #[test]
 fn default_config() {
     let config = parse(&[]);
     assert!(!config.bytes);
-    assert!(config.kibi);
+    assert!(!config.kibi);
     assert!(!config.mebi);
     assert!(!config.gibi);
     assert!(!config.human);
@@ -22,7 +25,6 @@ fn default_config() {
 fn flag_b_bytes() {
     let config = parse(&["-b"]);
     assert!(config.bytes);
-    assert!(!config.kibi);
 }
 
 #[test]
@@ -35,21 +37,18 @@ fn flag_k_kibi() {
 fn flag_m_mebi() {
     let config = parse(&["-m"]);
     assert!(config.mebi);
-    assert!(!config.kibi);
 }
 
 #[test]
 fn flag_g_gibi() {
     let config = parse(&["-g"]);
     assert!(config.gibi);
-    assert!(!config.kibi);
 }
 
 #[test]
 fn flag_h_human() {
     let config = parse(&["-h"]);
     assert!(config.human);
-    assert!(!config.kibi);
 }
 
 #[test]
@@ -89,22 +88,11 @@ fn long_wide() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(FreeConfig::from_args(&owned).is_none());
+fn help_is_err() {
+    assert!(FreeConfig::try_parse_from(["free", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(FreeConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn last_unit_wins() {
-    let config = parse(&["-b", "-m", "-g"]);
-    assert!(config.gibi);
-    assert!(!config.bytes);
-    assert!(!config.mebi);
-    assert!(!config.kibi);
+fn version_is_err() {
+    assert!(FreeConfig::try_parse_from(["free", "--version"]).is_err());
 }

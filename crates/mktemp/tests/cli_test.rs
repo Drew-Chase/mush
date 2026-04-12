@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use mktemp::cli::MktempConfig;
 use mktemp::ops;
 
 fn parse(args: &[&str]) -> MktempConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    MktempConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["mktemp"];
+    full.extend_from_slice(args);
+    MktempConfig::parse_from(full)
 }
 
 #[test]
@@ -79,7 +82,7 @@ fn template_positional() {
 
 #[test]
 fn combined_flags() {
-    let config = parse(&["-duq", "test.XXXXXX"]);
+    let config = parse(&["-d", "-u", "-q", "test.XXXXXX"]);
     assert!(config.directory);
     assert!(config.dry_run);
     assert!(config.quiet);
@@ -87,15 +90,13 @@ fn combined_flags() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(MktempConfig::from_args(&owned).is_none());
+fn help_is_err() {
+    assert!(MktempConfig::try_parse_from(["mktemp", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(MktempConfig::from_args(&owned).is_none());
+fn version_is_err() {
+    assert!(MktempConfig::try_parse_from(["mktemp", "--version"]).is_err());
 }
 
 #[test]

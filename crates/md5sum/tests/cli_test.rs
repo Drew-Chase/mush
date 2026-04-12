@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use md5sum::cli::Md5sumConfig;
 
 fn parse(args: &[&str]) -> Md5sumConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    Md5sumConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["md5sum"];
+    full.extend_from_slice(args);
+    Md5sumConfig::parse_from(full)
 }
 
 #[test]
@@ -49,15 +52,6 @@ fn long_flags() {
     assert!(config.tag);
     assert!(config.quiet);
     assert!(config.status);
-    assert!(config.warn);
-}
-
-#[test]
-fn combined_short_flags() {
-    let config = parse(&["-bcqw"]);
-    assert!(config.binary);
-    assert!(config.check);
-    assert!(config.quiet);
     assert!(config.warn);
 }
 

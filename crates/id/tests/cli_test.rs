@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use id::cli::IdConfig;
 
 fn parse(args: &[&str]) -> IdConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    IdConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["id"];
+    full.extend_from_slice(args);
+    IdConfig::parse_from(full)
 }
 
 #[test]
@@ -83,15 +86,13 @@ fn positional_user() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(IdConfig::from_args(&owned).is_none());
+fn help_is_err() {
+    assert!(IdConfig::try_parse_from(["id", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(IdConfig::from_args(&owned).is_none());
+fn version_is_err() {
+    assert!(IdConfig::try_parse_from(["id", "--version"]).is_err());
 }
 
 #[test]

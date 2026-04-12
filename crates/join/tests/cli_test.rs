@@ -1,11 +1,16 @@
 use std::io::Cursor;
 
+use clap::Parser;
+
 use join::cli::JoinConfig;
 use join::ops;
 
 fn parse(args: &[&str]) -> JoinConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    JoinConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["join"];
+    full.extend_from_slice(args);
+    let mut config = JoinConfig::parse_from(full);
+    config.resolve();
+    config
 }
 
 fn run_join(input1: &str, input2: &str, args: &[&str]) -> String {

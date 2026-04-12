@@ -1,15 +1,13 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use du::cli::DuConfig;
 use du::ops::{du_path, format_size};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = DuConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = DuConfig::parse();
 
     let files = if config.files.is_empty() {
         vec![".".to_string()]

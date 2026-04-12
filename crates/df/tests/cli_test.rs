@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use df::cli::DfConfig;
 
 fn parse(args: &[&str]) -> DfConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    DfConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["df"];
+    full.extend_from_slice(args);
+    DfConfig::parse_from(full)
 }
 
 #[test]
@@ -90,15 +93,13 @@ fn positional_files() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(DfConfig::from_args(&owned).is_none());
+fn help_is_err() {
+    assert!(DfConfig::try_parse_from(["df", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(DfConfig::from_args(&owned).is_none());
+fn version_is_err() {
+    assert!(DfConfig::try_parse_from(["df", "--version"]).is_err());
 }
 
 #[test]

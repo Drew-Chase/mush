@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use mkdir::cli::MkdirConfig;
 
 fn parse(args: &[&str]) -> MkdirConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    MkdirConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["mkdir"];
+    full.extend_from_slice(args);
+    MkdirConfig::parse_from(full)
 }
 
 #[test]
@@ -41,7 +44,7 @@ fn flag_v() {
 
 #[test]
 fn combined_pv() {
-    let config = parse(&["-pv", "foo"]);
+    let config = parse(&["-p", "-v", "foo"]);
     assert!(config.parents);
     assert!(config.verbose);
 }
@@ -86,7 +89,7 @@ fn long_verbose() {
 
 #[test]
 fn combined_pm() {
-    let config = parse(&["-pm", "755", "foo"]);
+    let config = parse(&["-p", "-m", "755", "foo"]);
     assert!(config.parents);
     assert_eq!(config.mode, Some(0o755));
     assert_eq!(config.directories, vec!["foo"]);
@@ -107,20 +110,18 @@ fn mode_700() {
 
 #[test]
 fn flags_before_and_dirs_after() {
-    let config = parse(&["-pv", "a", "b", "c"]);
+    let config = parse(&["-p", "-v", "a", "b", "c"]);
     assert!(config.parents);
     assert!(config.verbose);
     assert_eq!(config.directories, vec!["a", "b", "c"]);
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(MkdirConfig::from_args(&owned).is_none());
+fn help_is_err() {
+    assert!(MkdirConfig::try_parse_from(["mkdir", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(MkdirConfig::from_args(&owned).is_none());
+fn version_is_err() {
+    assert!(MkdirConfig::try_parse_from(["mkdir", "--version"]).is_err());
 }

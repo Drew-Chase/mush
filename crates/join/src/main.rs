@@ -2,15 +2,14 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use join::cli::JoinConfig;
 use join::ops;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = JoinConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let mut config = JoinConfig::parse();
+    config.resolve();
 
     let stdin = io::stdin();
     let mut input1: Box<dyn io::Read> = if config.file1 == "-" {

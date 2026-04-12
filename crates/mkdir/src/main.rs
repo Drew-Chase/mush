@@ -1,15 +1,13 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use mkdir::cli::MkdirConfig;
 use mkdir::ops::create_directory;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = MkdirConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = MkdirConfig::parse();
 
     if config.directories.is_empty() {
         eprintln!("mkdir: missing operand");

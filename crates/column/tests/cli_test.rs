@@ -1,11 +1,14 @@
 use std::io::Cursor;
 
+use clap::Parser;
+
 use column::cli::ColumnConfig;
 use column::ops::column;
 
 fn parse(args: &[&str]) -> ColumnConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    ColumnConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["column"];
+    full.extend_from_slice(args);
+    ColumnConfig::parse_from(full)
 }
 
 fn run(args: &[&str], input: &str) -> String {
@@ -75,15 +78,13 @@ fn json_with_column_names() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned: Vec<String> = vec!["--help".to_string()];
-    assert!(ColumnConfig::from_args(&owned).is_none());
+fn help_is_err() {
+    assert!(ColumnConfig::try_parse_from(["column", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned: Vec<String> = vec!["--version".to_string()];
-    assert!(ColumnConfig::from_args(&owned).is_none());
+fn version_is_err() {
+    assert!(ColumnConfig::try_parse_from(["column", "--version"]).is_err());
 }
 
 #[test]

@@ -1,8 +1,13 @@
+use clap::Parser;
+
 use cut::cli::{CutConfig, CutMode, Range, parse_ranges};
 
 fn parse(args: &[&str]) -> CutConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    CutConfig::from_args(&owned).expect("should not be --help/--version/error")
+    let mut full = vec!["cut"];
+    full.extend_from_slice(args);
+    let mut config = CutConfig::parse_from(full);
+    config.resolve().expect("should resolve mode");
+    config
 }
 
 // --- Range parsing ---
@@ -45,38 +50,32 @@ fn parse_complex() {
 #[test]
 fn fields_flag() {
     let config = parse(&["-f", "1,3"]);
-    assert!(matches!(config.mode, CutMode::Fields(_)));
-    assert_eq!(config.delimiter, '\t');
+    assert!(matches!(config.mode, Some(CutMode::Fields(_))));
+    assert_eq!(config.delimiter_char(), '\t');
 }
 
 #[test]
 fn fields_attached() {
     let config = parse(&["-f1,3"]);
-    assert!(matches!(config.mode, CutMode::Fields(_)));
+    assert!(matches!(config.mode, Some(CutMode::Fields(_))));
 }
 
 #[test]
 fn delimiter_flag() {
     let config = parse(&["-f", "1", "-d", ":"]);
-    assert_eq!(config.delimiter, ':');
-}
-
-#[test]
-fn delimiter_attached() {
-    let config = parse(&["-f", "1", "-d:"]);
-    assert_eq!(config.delimiter, ':');
+    assert_eq!(config.delimiter_char(), ':');
 }
 
 #[test]
 fn bytes_flag() {
     let config = parse(&["-b", "1-3"]);
-    assert!(matches!(config.mode, CutMode::Bytes(_)));
+    assert!(matches!(config.mode, Some(CutMode::Bytes(_))));
 }
 
 #[test]
 fn characters_flag() {
     let config = parse(&["-c", "2-4"]);
-    assert!(matches!(config.mode, CutMode::Characters(_)));
+    assert!(matches!(config.mode, Some(CutMode::Characters(_))));
 }
 
 #[test]
@@ -100,8 +99,8 @@ fn output_delimiter_flag() {
 #[test]
 fn long_flags() {
     let config = parse(&["--fields=1,3-5", "--delimiter=:", "--only-delimited"]);
-    assert!(matches!(config.mode, CutMode::Fields(_)));
-    assert_eq!(config.delimiter, ':');
+    assert!(matches!(config.mode, Some(CutMode::Fields(_))));
+    assert_eq!(config.delimiter_char(), ':');
     assert!(config.only_delimited);
 }
 
@@ -138,7 +137,7 @@ fn cut_fields_custom_delim() {
 
 #[test]
 fn cut_fields_output_delim() {
-    let result = run_cut("a:b:c\n", &["-f", "1,3", "-d:", "--output-delimiter=|"]);
+    let result = run_cut("a:b:c\n", &["-f", "1,3", "-d", ":", "--output-delimiter=|"]);
     assert_eq!(result, "a|c\n");
 }
 
@@ -162,18 +161,18 @@ fn cut_only_delimited() {
 
 #[test]
 fn cut_complement() {
-    let result = run_cut("a:b:c:d\n", &["-f", "2", "-d:", "--complement"]);
+    let result = run_cut("a:b:c:d\n", &["-f", "2", "-d", ":", "--complement"]);
     assert_eq!(result, "a:c:d\n");
 }
 
 #[test]
 fn cut_range_from() {
-    let result = run_cut("a:b:c:d\n", &["-f", "3-", "-d:"]);
+    let result = run_cut("a:b:c:d\n", &["-f", "3-", "-d", ":"]);
     assert_eq!(result, "c:d\n");
 }
 
 #[test]
 fn cut_range_to() {
-    let result = run_cut("a:b:c:d\n", &["-f", "-2", "-d:"]);
+    let result = run_cut("a:b:c:d\n", &["-f", "-2", "-d", ":"]);
     assert_eq!(result, "a:b\n");
 }

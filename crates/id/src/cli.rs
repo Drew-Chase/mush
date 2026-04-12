@@ -1,57 +1,30 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
 
-const HELP_TEXT: &str = "\
-Usage: id [OPTIONS] [USER]
-
-Print user and group information for the specified USER, or current user.
-
-  -u, --user     print only the effective user ID
-  -g, --group    print only the effective group ID
-  -G, --groups   print all group IDs
-  -n, --name     print a name instead of a number, for -ugG
-  -r, --real     print the real ID instead of the effective ID, for -ugG
-      --help     display this help and exit
-      --version  output version information and exit";
-
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Parser, Debug, Clone, Default, PartialEq)]
+#[command(
+    name = "id",
+    about = "Print user and group information for the specified USER, or current user",
+    version,
+    disable_help_flag = true
+)]
 pub struct IdConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help)]
+    pub help: Option<bool>,
+
+    #[arg(short = 'u', long = "user")]
     pub user_only: bool,
+
+    #[arg(short = 'g', long = "group")]
     pub group_only: bool,
+
+    #[arg(short = 'G', long = "groups")]
     pub groups_only: bool,
+
+    #[arg(short = 'n', long = "name")]
     pub name: bool,
+
+    #[arg(short = 'r', long = "real")]
     pub real: bool,
+
     pub target_user: Option<String>,
-}
-
-impl IdConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = IdConfig::default();
-
-        for arg in args {
-            match arg.as_str() {
-                "--help" => {
-                    println!("{HELP_TEXT}");
-                    return None;
-                }
-                "--version" => {
-                    println!("id {VERSION}");
-                    return None;
-                }
-                "-u" | "--user" => config.user_only = true,
-                "-g" | "--group" => config.group_only = true,
-                "-G" | "--groups" => config.groups_only = true,
-                "-n" | "--name" => config.name = true,
-                "-r" | "--real" => config.real = true,
-                _ => {
-                    if arg.starts_with('-') {
-                        eprintln!("id: unknown option '{arg}'");
-                    } else {
-                        config.target_user = Some(arg.clone());
-                    }
-                }
-            }
-        }
-
-        Some(config)
-    }
 }

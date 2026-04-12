@@ -2,15 +2,13 @@ use std::io;
 use std::path::Path;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use md5sum::cli::Md5sumConfig;
 use md5sum::ops::{check_file, format_hash, hash_file, hash_reader};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = Md5sumConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = Md5sumConfig::parse();
 
     let files = if config.files.is_empty() {
         vec!["-".to_string()]

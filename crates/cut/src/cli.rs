@@ -1,32 +1,4 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-const HELP_TEXT: &str = "\
-Usage: cut OPTION... [FILE]...
-
-Print selected parts of lines from each FILE to standard output.
-
-With no FILE, or when FILE is -, read standard input.
-
-Mandatory arguments to long options are mandatory for short options too.
-  -b, --bytes=LIST        select only these bytes
-  -c, --characters=LIST   select only these characters
-  -d, --delimiter=DELIM   use DELIM instead of TAB for field delimiter
-  -f, --fields=LIST       select only these fields
-  -s, --only-delimited    do not print lines not containing delimiters
-      --complement         complement the set of selected bytes, characters
-                             or fields
-      --output-delimiter=STRING  use STRING as the output delimiter
-      --help     display this help and exit
-      --version  output version information and exit
-
-Use one, and only one of -b, -c or -f. Each LIST is made up of one range,
-or many ranges separated by commas.
-
-Each range is one of:
-  N     N'th byte, character or field, counted from 1
-  N-    from N'th byte, character or field, to end of line
-  N-M   from N'th to M'th (included) byte, character or field
-  -M    from first to M'th (included) byte, character or field";
+use clap::Parser;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Range {
@@ -87,149 +59,65 @@ pub enum CutMode {
     Fields(Vec<Range>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Parser, Debug, Clone)]
+#[command(
+    name = "cut",
+    about = "Print selected parts of lines from each FILE to standard output",
+    version,
+    disable_help_flag = true
+)]
 pub struct CutConfig {
-    pub mode: CutMode,
-    pub delimiter: char,
+    #[arg(long = "help", action = clap::ArgAction::Help)]
+    pub help: Option<bool>,
+
+    #[arg(short = 'b', long = "bytes", allow_hyphen_values = true)]
+    pub bytes_spec: Option<String>,
+
+    #[arg(short = 'c', long = "characters", allow_hyphen_values = true)]
+    pub characters_spec: Option<String>,
+
+    #[arg(short = 'f', long = "fields", allow_hyphen_values = true)]
+    pub fields_spec: Option<String>,
+
+    #[arg(short = 'd', long = "delimiter", default_value = "\t")]
+    pub delimiter: String,
+
+    #[arg(long = "output-delimiter")]
     pub output_delimiter: Option<String>,
+
+    #[arg(short = 's', long = "only-delimited")]
     pub only_delimited: bool,
+
+    #[arg(long = "complement")]
     pub complement: bool,
+
     pub files: Vec<String>,
+
+    /// Resolved cut mode (not set by clap, use resolve() after parsing)
+    #[arg(skip)]
+    pub mode: Option<CutMode>,
 }
 
 impl CutConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut mode: Option<CutMode> = None;
-        let mut delimiter: char = '\t';
-        let mut output_delimiter: Option<String> = None;
-        let mut only_delimited = false;
-        let mut complement = false;
-        let mut files: Vec<String> = Vec::new();
-        let mut i = 0;
-
-        while i < args.len() {
-            let arg = &args[i];
-
-            if arg == "--help" {
-                println!("{HELP_TEXT}");
-                return None;
-            }
-            if arg == "--version" {
-                println!("cut {VERSION}");
-                return None;
-            }
-            if arg == "--" {
-                i += 1;
-                break;
-            }
-
-            match arg.as_str() {
-                "--complement" => complement = true,
-                "--only-delimited" => only_delimited = true,
-                _ if arg.starts_with("--bytes=") => {
-                    let spec = arg.strip_prefix("--bytes=")?;
-                    mode = Some(CutMode::Bytes(parse_ranges(spec)?));
-                }
-                _ if arg.starts_with("--characters=") => {
-                    let spec = arg.strip_prefix("--characters=")?;
-                    mode = Some(CutMode::Characters(parse_ranges(spec)?));
-                }
-                _ if arg.starts_with("--fields=") => {
-                    let spec = arg.strip_prefix("--fields=")?;
-                    mode = Some(CutMode::Fields(parse_ranges(spec)?));
-                }
-                _ if arg.starts_with("--delimiter=") => {
-                    let val = arg.strip_prefix("--delimiter=")?;
-                    delimiter = val.chars().next()?;
-                }
-                _ if arg.starts_with("--output-delimiter=") => {
-                    let val = arg.strip_prefix("--output-delimiter=")?.to_string();
-                    output_delimiter = Some(val);
-                }
-                "--bytes" | "-b" => {
-                    i += 1;
-                    mode = Some(CutMode::Bytes(parse_ranges(args.get(i)?)?));
-                }
-                "--characters" | "-c" => {
-                    i += 1;
-                    mode = Some(CutMode::Characters(parse_ranges(args.get(i)?)?));
-                }
-                "--fields" | "-f" => {
-                    i += 1;
-                    mode = Some(CutMode::Fields(parse_ranges(args.get(i)?)?));
-                }
-                "--delimiter" | "-d" => {
-                    i += 1;
-                    delimiter = args.get(i)?.chars().next()?;
-                }
-                "-s" => only_delimited = true,
-                _ if arg.starts_with('-') && arg.len() > 1 && !arg.starts_with("--") => {
-                    // Handle combined short options like -f1, -d:, -b1-3
-                    let flag = arg.as_bytes()[1] as char;
-                    let rest = &arg[2..];
-                    match flag {
-                        'b' => {
-                            if rest.is_empty() {
-                                i += 1;
-                                mode = Some(CutMode::Bytes(parse_ranges(args.get(i)?)?));
-                            } else {
-                                mode = Some(CutMode::Bytes(parse_ranges(rest)?));
-                            }
-                        }
-                        'c' => {
-                            if rest.is_empty() {
-                                i += 1;
-                                mode = Some(CutMode::Characters(parse_ranges(args.get(i)?)?));
-                            } else {
-                                mode = Some(CutMode::Characters(parse_ranges(rest)?));
-                            }
-                        }
-                        'f' => {
-                            if rest.is_empty() {
-                                i += 1;
-                                mode = Some(CutMode::Fields(parse_ranges(args.get(i)?)?));
-                            } else {
-                                mode = Some(CutMode::Fields(parse_ranges(rest)?));
-                            }
-                        }
-                        'd' => {
-                            if rest.is_empty() {
-                                i += 1;
-                                delimiter = args.get(i)?.chars().next()?;
-                            } else {
-                                delimiter = rest.chars().next()?;
-                            }
-                        }
-                        's' => only_delimited = true,
-                        _ => {
-                            eprintln!("cut: invalid option -- '{flag}'");
-                            return None;
-                        }
-                    }
-                }
-                _ => {
-                    files.push(arg.clone());
-                }
-            }
-
-            i += 1;
-        }
-
-        // Remaining args after --
-        files.extend(args[i..].iter().cloned());
-
-        let mode = mode.or_else(|| {
+    /// Resolve the cut mode from the raw parsed fields.
+    /// Returns None if no mode was specified or if range parsing fails.
+    pub fn resolve(&mut self) -> Option<()> {
+        let mode = if let Some(ref spec) = self.bytes_spec {
+            Some(CutMode::Bytes(parse_ranges(spec)?))
+        } else if let Some(ref spec) = self.characters_spec {
+            Some(CutMode::Characters(parse_ranges(spec)?))
+        } else if let Some(ref spec) = self.fields_spec {
+            Some(CutMode::Fields(parse_ranges(spec)?))
+        } else {
             eprintln!("cut: you must specify a list of bytes, characters, or fields");
-            None
-        })?;
+            return None;
+        };
+        self.mode = mode;
+        Some(())
+    }
 
-        Some(CutConfig {
-            mode,
-            delimiter,
-            output_delimiter,
-            only_delimited,
-            complement,
-            files,
-        })
+    /// Get the delimiter as a char.
+    pub fn delimiter_char(&self) -> char {
+        self.delimiter.chars().next().unwrap_or('\t')
     }
 }

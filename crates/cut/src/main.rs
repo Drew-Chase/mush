@@ -2,15 +2,17 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use cut::cli::CutConfig;
 use cut::ops;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut config = CutConfig::parse();
 
-    let Some(config) = CutConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    if config.resolve().is_none() {
+        return ExitCode::FAILURE;
+    }
 
     let files = if config.files.is_empty() {
         vec!["-".to_string()]

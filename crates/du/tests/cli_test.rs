@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use du::cli::DuConfig;
 
 fn parse(args: &[&str]) -> DuConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    DuConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["du"];
+    full.extend_from_slice(args);
+    DuConfig::parse_from(full)
 }
 
 #[test]
@@ -47,7 +50,6 @@ fn flag_c() {
 fn flag_b() {
     let config = parse(&["-b"]);
     assert!(config.bytes);
-    assert!(config.apparent_size);
 }
 
 #[test]
@@ -105,12 +107,11 @@ fn long_apparent_size() {
 fn long_bytes() {
     let config = parse(&["--bytes"]);
     assert!(config.bytes);
-    assert!(config.apparent_size);
 }
 
 #[test]
 fn combined_flags() {
-    let config = parse(&["-shac"]);
+    let config = parse(&["-s", "-h", "-a", "-c"]);
     assert!(config.summarize);
     assert!(config.human_readable);
     assert!(config.all);

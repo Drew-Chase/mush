@@ -10,7 +10,7 @@ fn is_selected(idx: usize, ranges: &[Range], complement: bool) -> bool {
 }
 
 pub fn cut_line(line: &str, config: &CutConfig) -> Option<String> {
-    match &config.mode {
+    match config.mode.as_ref().expect("mode must be resolved before calling cut_line") {
         CutMode::Bytes(ranges) => {
             let bytes = line.as_bytes();
             let selected: Vec<u8> = bytes
@@ -31,7 +31,7 @@ pub fn cut_line(line: &str, config: &CutConfig) -> Option<String> {
             Some(selected)
         }
         CutMode::Fields(ranges) => {
-            let delim_str: &str = &config.delimiter.to_string();
+            let delim_str: &str = &config.delimiter_char().to_string();
 
             // If line has no delimiter and -s is set, suppress the line
             if !line.contains(delim_str) {
