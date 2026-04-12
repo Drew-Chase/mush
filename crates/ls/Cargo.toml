@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-clap = { version = "4.6.0", features = ["help", "wrap_help", "derive", "color", "error-context", "suggestions", "string", "usage"] }
+clap.workspace = true
 terminal_size = "0.4"
 time = { version = "0.3", features = ["local-offset", "formatting", "macros"] }
 
