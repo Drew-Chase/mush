@@ -163,6 +163,97 @@ impl CommandInput {
         }
     }
 
+    // --- Word-level movement ---
+
+    fn prev_word_boundary(&self, from: usize) -> usize {
+        if from == 0 {
+            return 0;
+        }
+        let before = &self.buffer[..from];
+        let mut chars = before.char_indices().rev().peekable();
+
+        // Skip trailing separators
+        while let Some(&(_, c)) = chars.peek() {
+            if is_word_separator(c) {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        // Skip word characters
+        let mut pos = 0;
+        for (i, c) in chars {
+            if is_word_separator(c) {
+                pos = i + c.len_utf8();
+                return pos;
+            }
+        }
+        pos
+    }
+
+    fn next_word_boundary(&self, from: usize) -> usize {
+        if from >= self.buffer.len() {
+            return self.buffer.len();
+        }
+        let after = &self.buffer[from..];
+        let mut chars = after.char_indices().peekable();
+
+        // Skip current word characters
+        while let Some(&(_, c)) = chars.peek() {
+            if !is_word_separator(c) {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        // Skip separators
+        for (i, c) in chars {
+            if !is_word_separator(c) {
+                return from + i;
+            }
+        }
+        self.buffer.len()
+    }
+
+    pub fn move_word_left(&mut self) {
+        self.clear_selection();
+        self.cursor = self.prev_word_boundary(self.cursor);
+    }
+
+    pub fn move_word_right(&mut self) {
+        self.clear_selection();
+        self.cursor = self.next_word_boundary(self.cursor);
+    }
+
+    pub fn move_word_left_select(&mut self) {
+        self.start_selection();
+        self.cursor = self.prev_word_boundary(self.cursor);
+    }
+
+    pub fn move_word_right_select(&mut self) {
+        self.start_selection();
+        self.cursor = self.next_word_boundary(self.cursor);
+    }
+
+    pub fn delete_word_backward(&mut self) {
+        if self.selection_range().is_some() {
+            self.delete_selection();
+            return;
+        }
+        let target = self.prev_word_boundary(self.cursor);
+        self.buffer.drain(target..self.cursor);
+        self.cursor = target;
+    }
+
+    pub fn delete_word_forward(&mut self) {
+        if self.selection_range().is_some() {
+            self.delete_selection();
+            return;
+        }
+        let target = self.next_word_boundary(self.cursor);
+        self.buffer.drain(self.cursor..target);
+    }
+
     pub fn home(&mut self) {
         self.clear_selection();
         self.cursor = 0;
@@ -348,6 +439,10 @@ impl Widget for &CommandInput {
             Paragraph::new(line).render(inner, buf);
         }
     }
+}
+
+fn is_word_separator(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '/' | '\\' | '.' | '-' | '_')
 }
 
 fn cwd_to_title(cwd: &str) -> Line<'static> {

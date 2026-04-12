@@ -438,6 +438,32 @@ impl App {
                         self.input.select_all();
                     }
 
+                    // Ctrl+Shift+Arrow word selection
+                    (m, KeyCode::Left)
+                        if m == KeyModifiers::CONTROL | KeyModifiers::SHIFT =>
+                    {
+                        self.input.move_word_left_select();
+                    }
+                    (m, KeyCode::Right)
+                        if m == KeyModifiers::CONTROL | KeyModifiers::SHIFT =>
+                    {
+                        self.input.move_word_right_select();
+                    }
+
+                    // Ctrl+Arrow word movement
+                    (KeyModifiers::CONTROL, KeyCode::Left) => self.input.move_word_left(),
+                    (KeyModifiers::CONTROL, KeyCode::Right) => self.input.move_word_right(),
+
+                    // Ctrl+Backspace/Delete word deletion
+                    (KeyModifiers::CONTROL, KeyCode::Backspace) => {
+                        self.input.delete_word_backward();
+                        self.on_input_changed();
+                    }
+                    (KeyModifiers::CONTROL, KeyCode::Delete) => {
+                        self.input.delete_word_forward();
+                        self.on_input_changed();
+                    }
+
                     // Shift+Arrow selection
                     (KeyModifiers::SHIFT, KeyCode::Left) => self.input.move_left_select(),
                     (KeyModifiers::SHIFT, KeyCode::Right) => self.input.move_right_select(),
