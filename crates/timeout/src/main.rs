@@ -1,14 +1,17 @@
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use timeout::cli::TimeoutConfig;
 use timeout::ops;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut config = TimeoutConfig::parse();
 
-    let Some(config) = TimeoutConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    if let Err(e) = config.resolve() {
+        eprintln!("{e}");
+        return ExitCode::FAILURE;
+    }
 
     match ops::run_with_timeout(&config) {
         Ok(code) => ExitCode::from(code as u8),

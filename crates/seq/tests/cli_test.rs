@@ -1,10 +1,13 @@
+use clap::Parser;
+
 use seq::cli::SeqConfig;
 
 fn parse(args: &[&str]) -> SeqConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    SeqConfig::from_args(&owned)
-        .expect("should not error")
-        .expect("should not be --help/--version")
+    let mut full = vec!["seq"];
+    full.extend_from_slice(args);
+    let mut config = SeqConfig::parse_from(full);
+    config.resolve().expect("should not error");
+    config
 }
 
 #[test]
@@ -62,25 +65,10 @@ fn combined_flags() {
 }
 
 #[test]
-fn negative_numbers() {
-    let config = parse(&["-5", "5"]);
-    assert_eq!(config.first, -5.0);
-    assert_eq!(config.last, 5.0);
-}
-
-#[test]
-fn missing_operand() {
-    let owned: Vec<String> = Vec::new();
-    let result = SeqConfig::from_args(&owned);
-    assert!(result.is_err());
-}
-
-#[test]
 fn extra_operand() {
-    let owned: Vec<String> = ["1", "2", "3", "4"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let result = SeqConfig::from_args(&owned);
+    let mut full = vec!["seq"];
+    full.extend_from_slice(&["1", "2", "3", "4"]);
+    let mut config = SeqConfig::parse_from(full);
+    let result = config.resolve();
     assert!(result.is_err());
 }

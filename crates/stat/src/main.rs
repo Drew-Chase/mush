@@ -1,14 +1,12 @@
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use stat::cli::StatConfig;
 use stat::ops::stat_file;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = StatConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = StatConfig::parse();
 
     let mut exit_code = 0u8;
 

@@ -1,8 +1,13 @@
+use clap::Parser;
+
 use timeout::cli::{TimeoutConfig, parse_duration};
 
 fn parse(args: &[&str]) -> TimeoutConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    TimeoutConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["timeout"];
+    full.extend_from_slice(args);
+    let mut config = TimeoutConfig::parse_from(full);
+    config.resolve().expect("should not error");
+    config
 }
 
 // --- duration parsing tests ---
@@ -123,21 +128,10 @@ fn duration_with_suffix() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned: Vec<String> = vec!["--help".to_string()];
-    assert!(TimeoutConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned: Vec<String> = vec!["--version".to_string()];
-    assert!(TimeoutConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn missing_command_returns_none() {
-    let owned: Vec<String> = vec!["5".to_string()];
-    assert!(TimeoutConfig::from_args(&owned).is_none());
+fn missing_command() {
+    let mut config = TimeoutConfig::parse_from(vec!["timeout", "5"]);
+    let result = config.resolve();
+    assert!(result.is_err());
 }
 
 #[test]

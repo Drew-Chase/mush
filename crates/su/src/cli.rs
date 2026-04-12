@@ -1,80 +1,41 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
 
-const HELP_TEXT: &str = "\
-Usage: su [OPTIONS] [USER]
-
-Switch to another user (default: root).
-
-  -c, --command CMD  pass CMD to the invoked shell
-  -l, --login        make the shell a login shell
-  -s, --shell SHELL  run SHELL instead of the default
-      --help         display this help and exit
-      --version      output version information and exit";
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Parser, Debug, Clone, PartialEq)]
+#[command(
+    name = "su",
+    about = "Switch to another user (default: root).",
+    version,
+    disable_help_flag = true
+)]
 pub struct SuConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    /// Pass CMD to the invoked shell
+    #[arg(short = 'c', long = "command")]
     pub command: Option<String>,
+
+    /// Make the shell a login shell
+    #[arg(short = 'l', long = "login")]
     pub login: bool,
+
+    /// Run SHELL instead of the default
+    #[arg(short = 's', long = "shell")]
     pub shell: Option<String>,
+
+    /// User to switch to
+    #[arg(default_value = "root")]
     pub user: String,
 }
 
 impl Default for SuConfig {
     fn default() -> Self {
         Self {
+            help: None,
             command: None,
             login: false,
             shell: None,
             user: "root".to_string(),
         }
-    }
-}
-
-impl SuConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = SuConfig::default();
-        let mut i = 0;
-
-        while i < args.len() {
-            let arg = &args[i];
-
-            match arg.as_str() {
-                "--help" => {
-                    println!("{HELP_TEXT}");
-                    return None;
-                }
-                "--version" => {
-                    println!("su {VERSION}");
-                    return None;
-                }
-                "-c" | "--command" => {
-                    i += 1;
-                    if i < args.len() {
-                        config.command = Some(args[i].clone());
-                    } else {
-                        eprintln!("su: option '{arg}' requires an argument");
-                    }
-                }
-                "-l" | "--login" | "-" => config.login = true,
-                "-s" | "--shell" => {
-                    i += 1;
-                    if i < args.len() {
-                        config.shell = Some(args[i].clone());
-                    } else {
-                        eprintln!("su: option '{arg}' requires an argument");
-                    }
-                }
-                _ => {
-                    if arg.starts_with('-') {
-                        eprintln!("su: unknown option '{arg}'");
-                    } else {
-                        config.user = arg.clone();
-                    }
-                }
-            }
-            i += 1;
-        }
-
-        Some(config)
     }
 }

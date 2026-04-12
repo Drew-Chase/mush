@@ -3,15 +3,13 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use tail::cli::TailConfig;
 use tail::ops::{follow_file, tail_bytes, tail_lines};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = TailConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = TailConfig::parse();
 
     let stdout = io::stdout();
     let mut out = stdout.lock();

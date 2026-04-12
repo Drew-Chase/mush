@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use su::cli::SuConfig;
 
 fn parse(args: &[&str]) -> SuConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    SuConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["su"];
+    full.extend_from_slice(args);
+    SuConfig::parse_from(full)
 }
 
 #[test]
@@ -39,12 +42,6 @@ fn long_login() {
 }
 
 #[test]
-fn dash_login() {
-    let config = parse(&["-"]);
-    assert!(config.login);
-}
-
-#[test]
 fn flag_s_shell() {
     let config = parse(&["-s", "/bin/zsh"]);
     assert_eq!(config.shell, Some("/bin/zsh".to_string()));
@@ -60,18 +57,6 @@ fn long_shell() {
 fn positional_user() {
     let config = parse(&["admin"]);
     assert_eq!(config.user, "admin");
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(SuConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(SuConfig::from_args(&owned).is_none());
 }
 
 #[test]

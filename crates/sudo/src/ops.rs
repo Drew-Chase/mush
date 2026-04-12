@@ -122,6 +122,7 @@ mod tests {
             shell: true,
             preserve_env: true,
             command: vec!["cmd".to_string()],
+            ..Default::default()
         };
         let args = build_args(&config);
         assert_eq!(args, vec!["-u", "admin", "-i", "-s", "-E", "cmd"]);

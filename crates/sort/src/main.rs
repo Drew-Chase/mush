@@ -2,6 +2,8 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use sort::cli::SortConfig;
 use sort::ops::{check_sorted, sort_lines};
 
@@ -16,11 +18,12 @@ fn read_lines_from(filename: &str) -> Result<Vec<String>, io::Error> {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut config = SortConfig::parse();
 
-    let Some(config) = SortConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    if let Err(e) = config.resolve() {
+        eprintln!("{e}");
+        return ExitCode::FAILURE;
+    }
 
     let files = if config.files.is_empty() {
         vec!["-".to_string()]

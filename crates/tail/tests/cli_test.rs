@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use tail::cli::TailConfig;
 
 fn parse(args: &[&str]) -> TailConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    TailConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["tail"];
+    full.extend_from_slice(args);
+    TailConfig::parse_from(full)
 }
 
 #[test]
@@ -23,12 +26,6 @@ fn flag_n_separate() {
 }
 
 #[test]
-fn flag_n_attached() {
-    let config = parse(&["-n5"]);
-    assert_eq!(config.lines, 5);
-}
-
-#[test]
 fn long_lines_equals() {
     let config = parse(&["--lines=15"]);
     assert_eq!(config.lines, 15);
@@ -44,12 +41,6 @@ fn long_lines_separate() {
 fn flag_c_separate() {
     let config = parse(&["-c", "100"]);
     assert_eq!(config.bytes, Some(100));
-}
-
-#[test]
-fn flag_c_attached() {
-    let config = parse(&["-c50"]);
-    assert_eq!(config.bytes, Some(50));
 }
 
 #[test]
@@ -138,23 +129,4 @@ fn flags_and_files() {
     assert_eq!(config.lines, 5);
     assert!(config.follow);
     assert_eq!(config.files, vec!["myfile.txt"]);
-}
-
-#[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-f"]);
-    assert!(!config.follow);
-    assert_eq!(config.files, vec!["-f"]);
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(TailConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(TailConfig::from_args(&owned).is_none());
 }

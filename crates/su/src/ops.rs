@@ -109,6 +109,7 @@ mod tests {
             login: true,
             shell: Some("/bin/bash".to_string()),
             user: "nobody".to_string(),
+            ..Default::default()
         };
         let args = build_args(&config);
         assert_eq!(args, vec!["-l", "-s", "/bin/bash", "-c", "id", "nobody"]);

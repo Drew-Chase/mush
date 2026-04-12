@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use stat::cli::StatConfig;
 
 fn parse(args: &[&str]) -> StatConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    StatConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["stat"];
+    full.extend_from_slice(args);
+    StatConfig::parse_from(full)
 }
 
 #[test]
@@ -67,24 +70,6 @@ fn combined_flags() {
     let config = parse(&["-Lt", "file.txt"]);
     assert!(config.dereference);
     assert!(config.terse);
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(StatConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(StatConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn missing_operand_returns_none() {
-    let owned: Vec<String> = vec![];
-    assert!(StatConfig::from_args(&owned).is_none());
 }
 
 #[test]

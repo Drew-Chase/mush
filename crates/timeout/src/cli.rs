@@ -1,36 +1,4 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-const HELP_TEXT: &str = "\
-Usage: timeout [OPTION] DURATION COMMAND [ARG]...
-  or:  timeout [OPTION]
-
-Start COMMAND, and kill it if still running after DURATION.
-
-DURATION is a number with optional suffix: 's' for seconds (the default),
-'m' for minutes, 'h' for hours or 'd' for days.  NUMBER need not be an
-integer.
-
-  -s, --signal=SIGNAL    specify the signal to be sent on timeout;
-                         SIGNAL may be a name like 'HUP' or a number;
-                         see 'kill -l' for a list of signals (default: TERM)
-  -k, --kill-after=DURATION
-                         also send a KILL signal if COMMAND is still running
-                         this long after the initial signal was sent
-      --preserve-status  exit with the same status as COMMAND, even when the
-                         command times out
-  -v, --verbose          diagnose to stderr any signal sent upon timeout
-      --help             display this help and exit
-      --version          output version information and exit";
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TimeoutConfig {
-    pub duration_secs: f64,
-    pub signal: String,
-    pub kill_after: Option<f64>,
-    pub preserve_status: bool,
-    pub verbose: bool,
-    pub command: Vec<String>,
-}
+use clap::Parser;
 
 /// Parse a duration string like "5", "1m", "0.5s", "2h", "1d" into seconds.
 pub fn parse_duration(s: &str) -> Option<f64> {
@@ -49,125 +17,71 @@ pub fn parse_duration(s: &str) -> Option<f64> {
     num_str.parse::<f64>().ok().map(|v| v * multiplier)
 }
 
+#[derive(Parser, Debug, Clone, PartialEq)]
+#[command(
+    name = "timeout",
+    about = "Start COMMAND, and kill it if still running after DURATION.",
+    version,
+    disable_help_flag = true
+)]
+pub struct TimeoutConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    /// Duration in seconds (resolved from positional duration arg)
+    #[arg(skip)]
+    pub duration_secs: f64,
+
+    /// Specify the signal to be sent on timeout
+    #[arg(short = 's', long = "signal", default_value = "TERM")]
+    pub signal: String,
+
+    /// Also send a KILL signal if COMMAND is still running this long after initial signal
+    #[arg(short = 'k', long = "kill-after")]
+    pub kill_after_str: Option<String>,
+
+    /// Resolved kill-after duration in seconds
+    #[arg(skip)]
+    pub kill_after: Option<f64>,
+
+    /// Exit with the same status as COMMAND, even when it times out
+    #[arg(long = "preserve-status")]
+    pub preserve_status: bool,
+
+    /// Diagnose to stderr any signal sent upon timeout
+    #[arg(short = 'v', long = "verbose")]
+    pub verbose: bool,
+
+    /// Resolved command (after duration)
+    #[arg(skip)]
+    pub command: Vec<String>,
+
+    /// Positional: DURATION COMMAND [ARG]...
+    #[arg(required = true, trailing_var_arg = true)]
+    pub args: Vec<String>,
+}
+
 impl TimeoutConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut signal = String::from("TERM");
-        let mut kill_after: Option<f64> = None;
-        let mut preserve_status = false;
-        let mut verbose = false;
-        let mut positionals: Vec<String> = Vec::new();
-
-        let mut i = 0;
-        while i < args.len() {
-            let arg = &args[i];
-            match arg.as_str() {
-                "--help" => {
-                    println!("{HELP_TEXT}");
-                    return None;
-                }
-                "--version" => {
-                    println!("timeout {VERSION}");
-                    return None;
-                }
-                "--preserve-status" => preserve_status = true,
-                "-v" | "--verbose" => verbose = true,
-                "-s" => {
-                    i += 1;
-                    if i < args.len() {
-                        signal = args[i].clone();
-                    } else {
-                        eprintln!("timeout: option '-s' requires an argument");
-                        return None;
-                    }
-                }
-                _ if arg.starts_with("--signal=") => {
-                    signal = arg.strip_prefix("--signal=").unwrap().to_string();
-                }
-                "--signal" => {
-                    i += 1;
-                    if i < args.len() {
-                        signal = args[i].clone();
-                    } else {
-                        eprintln!("timeout: option '--signal' requires an argument");
-                        return None;
-                    }
-                }
-                "-k" => {
-                    i += 1;
-                    if i < args.len() {
-                        match parse_duration(&args[i]) {
-                            Some(d) => kill_after = Some(d),
-                            None => {
-                                eprintln!("timeout: invalid duration '{}'", args[i]);
-                                return None;
-                            }
-                        }
-                    } else {
-                        eprintln!("timeout: option '-k' requires an argument");
-                        return None;
-                    }
-                }
-                _ if arg.starts_with("--kill-after=") => {
-                    let val = arg.strip_prefix("--kill-after=").unwrap();
-                    match parse_duration(val) {
-                        Some(d) => kill_after = Some(d),
-                        None => {
-                            eprintln!("timeout: invalid duration '{val}'");
-                            return None;
-                        }
-                    }
-                }
-                "--kill-after" => {
-                    i += 1;
-                    if i < args.len() {
-                        match parse_duration(&args[i]) {
-                            Some(d) => kill_after = Some(d),
-                            None => {
-                                eprintln!("timeout: invalid duration '{}'", args[i]);
-                                return None;
-                            }
-                        }
-                    } else {
-                        eprintln!("timeout: option '--kill-after' requires an argument");
-                        return None;
-                    }
-                }
-                _ => {
-                    // First positional is duration, rest is command
-                    positionals.extend(args[i..].iter().cloned());
-                    break;
-                }
-            }
-            i += 1;
+    pub fn resolve(&mut self) -> Result<(), String> {
+        if let Some(ref ka) = self.kill_after_str {
+            self.kill_after = Some(
+                parse_duration(ka)
+                    .ok_or_else(|| format!("timeout: invalid duration '{ka}'"))?,
+            );
         }
 
-        if positionals.is_empty() {
-            eprintln!("timeout: missing operand");
-            return None;
+        if self.args.is_empty() {
+            return Err("timeout: missing operand".to_string());
         }
 
-        let duration_secs = match parse_duration(&positionals[0]) {
-            Some(d) => d,
-            None => {
-                eprintln!("timeout: invalid time interval '{}'", positionals[0]);
-                return None;
-            }
-        };
+        self.duration_secs = parse_duration(&self.args[0])
+            .ok_or_else(|| format!("timeout: invalid time interval '{}'", self.args[0]))?;
 
-        if positionals.len() < 2 {
-            eprintln!("timeout: missing operand");
-            return None;
+        if self.args.len() < 2 {
+            return Err("timeout: missing operand".to_string());
         }
 
-        let command = positionals[1..].to_vec();
-
-        Some(TimeoutConfig {
-            duration_secs,
-            signal,
-            kill_after,
-            preserve_status,
-            verbose,
-            command,
-        })
+        self.command = self.args[1..].to_vec();
+        Ok(())
     }
 }

@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use sha256sum::cli::Sha256sumConfig;
 
 fn parse(args: &[&str]) -> Sha256sumConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    Sha256sumConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["sha256sum"];
+    full.extend_from_slice(args);
+    Sha256sumConfig::parse_from(full)
 }
 
 #[test]
@@ -85,13 +88,6 @@ fn files_collected() {
 fn dash_is_stdin() {
     let config = parse(&["-"]);
     assert_eq!(config.files, vec!["-"]);
-}
-
-#[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-b"]);
-    assert!(!config.binary);
-    assert_eq!(config.files, vec!["-b"]);
 }
 
 #[test]

@@ -2,15 +2,18 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use shuf::cli::ShufConfig;
 use shuf::ops::{XorShift64, range_to_lines, read_lines, shuf_lines};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut config = ShufConfig::parse();
 
-    let Some(config) = ShufConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    if let Err(e) = config.resolve() {
+        eprintln!("shuf: {e}");
+        return ExitCode::FAILURE;
+    }
 
     let mut rng = XorShift64::from_time();
     let stdout = io::stdout();

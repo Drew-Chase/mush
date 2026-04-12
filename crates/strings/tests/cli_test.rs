@@ -1,11 +1,14 @@
 use std::io::Cursor;
 
+use clap::Parser;
+
 use strings_cmd::cli::StringsConfig;
 use strings_cmd::ops;
 
 fn parse(args: &[&str]) -> StringsConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    StringsConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["strings"];
+    full.extend_from_slice(args);
+    StringsConfig::parse_from(full)
 }
 
 fn run_strings(input: &[u8], args: &[&str]) -> String {

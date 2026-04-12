@@ -1,9 +1,14 @@
+use clap::Parser;
+
 use shuf::cli::ShufConfig;
 use shuf::ops::{XorShift64, range_to_lines, read_lines, shuf_lines, shuffle};
 
 fn parse(args: &[&str]) -> ShufConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    ShufConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["shuf"];
+    full.extend_from_slice(args);
+    let mut config = ShufConfig::parse_from(full);
+    config.resolve().expect("should not error");
+    config
 }
 
 #[test]
@@ -38,18 +43,6 @@ fn parse_repeat() {
     let config = parse(&["-r", "-n", "3"]);
     assert!(config.repeat);
     assert_eq!(config.head_count, Some(3));
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(ShufConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(ShufConfig::from_args(&owned).is_none());
 }
 
 #[test]

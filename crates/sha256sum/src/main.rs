@@ -2,15 +2,21 @@ use std::io;
 use std::path::Path;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use sha256sum::cli::Sha256sumConfig;
 use sha256sum::ops::{check_file, format_hash, hash_file, hash_reader};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let config = Sha256sumConfig::parse();
 
-    let Some(config) = Sha256sumConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    if config.algorithm != "sha256" {
+        eprintln!(
+            "sha256sum: algorithm '{}' is not supported (only sha256 is supported)",
+            config.algorithm
+        );
+        return ExitCode::FAILURE;
+    }
 
     let files = if config.files.is_empty() {
         vec!["-".to_string()]

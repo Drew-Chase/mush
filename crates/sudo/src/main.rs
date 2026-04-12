@@ -1,14 +1,12 @@
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use sudo::cli::SudoConfig;
 use sudo::ops::execute;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = SudoConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = SudoConfig::parse();
 
     if config.command.is_empty() && !config.login && !config.shell {
         eprintln!("sudo: no command specified");

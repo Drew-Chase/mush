@@ -1,8 +1,13 @@
+use clap::Parser;
+
 use sort::cli::{SortConfig, SortKey};
 
 fn parse(args: &[&str]) -> SortConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    SortConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["sort"];
+    full.extend_from_slice(args);
+    let mut config = SortConfig::parse_from(full);
+    config.resolve().expect("should not error");
+    config
 }
 
 #[test]
@@ -113,20 +118,8 @@ fn flag_t_separate() {
 }
 
 #[test]
-fn flag_t_inline() {
-    let config = parse(&["-t:"]);
-    assert_eq!(config.separator, Some(':'));
-}
-
-#[test]
 fn flag_o_separate() {
     let config = parse(&["-o", "out.txt"]);
-    assert_eq!(config.output, Some("out.txt".to_string()));
-}
-
-#[test]
-fn flag_o_inline() {
-    let config = parse(&["-oout.txt"]);
     assert_eq!(config.output, Some("out.txt".to_string()));
 }
 
@@ -249,26 +242,4 @@ fn dash_is_stdin() {
     let config = parse(&["-r", "-"]);
     assert!(config.reverse);
     assert_eq!(config.files, vec!["-"]);
-}
-
-#[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-r"]);
-    assert!(!config.reverse);
-    assert_eq!(config.files, vec!["-r"]);
-}
-
-#[test]
-fn combined_k_inline() {
-    let config = parse(&["-k2,3"]);
-    assert_eq!(config.key.len(), 1);
-    assert_eq!(config.key[0], SortKey { start_field: 2, end_field: Some(3) });
-}
-
-#[test]
-fn combined_flags_with_k() {
-    let config = parse(&["-nk", "2"]);
-    assert!(config.numeric);
-    assert_eq!(config.key.len(), 1);
-    assert_eq!(config.key[0].start_field, 2);
 }

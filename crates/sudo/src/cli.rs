@@ -1,72 +1,33 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
 
-const HELP_TEXT: &str = "\
-Usage: sudo [OPTIONS] COMMAND [ARGS]...
-Execute a command as another user.
-
-  -u, --user USER      run command as USER (default: root)
-  -i, --login          run login shell as the target user
-  -s, --shell          run shell as the target user
-  -E, --preserve-env   preserve user environment when running command
-      --help           display this help and exit
-      --version        output version information and exit";
-
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Parser, Debug, Clone, Default, PartialEq)]
+#[command(
+    name = "sudo",
+    about = "Execute a command as another user.",
+    version,
+    disable_help_flag = true
+)]
 pub struct SudoConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    /// Run command as USER (default: root)
+    #[arg(short = 'u', long = "user")]
     pub user: Option<String>,
+
+    /// Run login shell as the target user
+    #[arg(short = 'i', long = "login")]
     pub login: bool,
+
+    /// Run shell as the target user
+    #[arg(short = 's', long = "shell")]
     pub shell: bool,
+
+    /// Preserve user environment when running command
+    #[arg(short = 'E', long = "preserve-env")]
     pub preserve_env: bool,
+
+    /// Command and arguments to execute
+    #[arg(trailing_var_arg = true)]
     pub command: Vec<String>,
-}
-
-impl SudoConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = SudoConfig::default();
-        let mut i = 0;
-        let mut found_command = false;
-
-        while i < args.len() {
-            if found_command {
-                config.command.push(args[i].clone());
-                i += 1;
-                continue;
-            }
-
-            let arg = &args[i];
-
-            match arg.as_str() {
-                "--help" => {
-                    println!("{HELP_TEXT}");
-                    return None;
-                }
-                "--version" => {
-                    println!("sudo {VERSION}");
-                    return None;
-                }
-                "-u" | "--user" => {
-                    i += 1;
-                    if i < args.len() {
-                        config.user = Some(args[i].clone());
-                    } else {
-                        eprintln!("sudo: option '{arg}' requires an argument");
-                    }
-                }
-                "-i" | "--login" => config.login = true,
-                "-s" | "--shell" => config.shell = true,
-                "-E" | "--preserve-env" => config.preserve_env = true,
-                _ => {
-                    if arg.starts_with('-') {
-                        eprintln!("sudo: unknown option '{arg}'");
-                    } else {
-                        config.command.push(arg.clone());
-                        found_command = true;
-                    }
-                }
-            }
-            i += 1;
-        }
-
-        Some(config)
-    }
 }

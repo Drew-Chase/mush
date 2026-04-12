@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use sudo::cli::SudoConfig;
 
 fn parse(args: &[&str]) -> SudoConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    SudoConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["sudo"];
+    full.extend_from_slice(args);
+    SudoConfig::parse_from(full)
 }
 
 #[test]
@@ -71,18 +74,6 @@ fn long_preserve_env() {
     let config = parse(&["--preserve-env", "printenv"]);
     assert!(config.preserve_env);
     assert_eq!(config.command, vec!["printenv"]);
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(SudoConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(SudoConfig::from_args(&owned).is_none());
 }
 
 #[test]
