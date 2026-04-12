@@ -120,7 +120,7 @@ fn format_scale_zero() {
 
 #[test]
 fn format_scale_two() {
-    assert_eq!(format_value(3.14159, 2), "3.14");
+    assert_eq!(format_value(std::f64::consts::PI, 2), "3.14");
 }
 
 #[test]

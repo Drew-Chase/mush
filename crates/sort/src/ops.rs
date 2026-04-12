@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_parse_numeric() {
         assert_eq!(parse_numeric("42"), 42.0);
-        assert_eq!(parse_numeric("  -3.14"), -3.14);
+        assert_eq!(parse_numeric("  -3.14"), -std::f64::consts::PI);
         assert_eq!(parse_numeric("abc"), 0.0);
         assert_eq!(parse_numeric("10abc"), 10.0);
     }
