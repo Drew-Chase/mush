@@ -23,38 +23,150 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/rm/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/rm/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/examples/progress/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/arch/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/arch/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/awk/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/awk/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/base64/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/base64/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/basename/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/basename/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/bc/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/bc/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/cat/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/cat/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/chgrp/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/chgrp/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/chmod/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/chmod/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/chown/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/chown/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/column/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/column/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/comm/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/comm/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/cut/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/cut/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/date/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/date/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/df/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/df/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/diff/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/diff/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dirname/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dirname/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/du/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/du/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/expand/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/expand/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/file/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/file/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/find/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/find/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/fmt/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/fmt/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/fold/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/fold/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/free/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/free/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/grep/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/grep/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/head/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/head/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/hostname/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/hostname/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/id/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/id/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/install/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/install/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/join/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/join/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/kill/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/kill/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/less/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/less/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ln/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ln/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/md5sum/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/md5sum/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/mktemp/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/mktemp/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/more/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/more/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/nohup/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/nohup/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/nproc/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/nproc/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/paste/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/paste/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/patch/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/patch/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/pgrep/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/pgrep/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/pkill/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/pkill/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/ps/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/ps/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/readlink/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/readlink/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/realpath/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/realpath/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/reset/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/reset/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/rev/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/rev/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/sed/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/sed/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/seq/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/seq/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/sha256sum/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/sha256sum/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/shuf/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/shuf/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/sleep/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/sleep/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/sort/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/sort/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/stat/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/stat/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/strings/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/strings/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/su/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/su/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/sudo/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/sudo/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/tail/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/tail/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/tee/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/tee/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/timeout/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/timeout/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/touch/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/touch/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/tput/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/tput/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/tr/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/tr/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/tree/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/tree/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/uname/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/uname/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/unexpand/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/unexpand/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/uniq/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/uniq/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/uptime/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/uptime/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/wc/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/wc/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/whoami/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/whoami/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/xargs/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/xargs/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/xxd/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/xxd/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/yes/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/yes/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
