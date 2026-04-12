@@ -27,6 +27,7 @@ SetCompressor /SOLID lzma
 !define APP_PUBLISHER   "Drew Chase"
 !define APP_URL         "https://github.com/drew-chase/mush"
 !define UNINSTALL_KEY   "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
+!define APP_PATHS_KEY  "SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\mush.exe"
 
 ; Path to the built binaries (relative to this .nsi file)
 !define DIST_DIR        "..\target\dist"
@@ -125,6 +126,7 @@ Function .onInit
     StrCpy $OptWindowsTerminal ${BST_CHECKED}
     StrCpy $OptStartMenu ${BST_CHECKED}
     StrCpy $OptSetDefaultShell ${BST_UNCHECKED}
+    StrCpy $OptOpenSSHShell ${BST_UNCHECKED}
 FunctionEnd
 
 ; ============================================================================

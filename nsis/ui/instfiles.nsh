@@ -97,6 +97,15 @@ Section "Mush Shell" SecMain
         WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallMode" "$InstallMode"
     ${EndIf}
 
+    ; --- App Paths registration ---
+    ${If} $InstallMode == "system"
+        WriteRegStr HKLM "${APP_PATHS_KEY}" "" "$INSTDIR\bin\mush.exe"
+        WriteRegStr HKLM "${APP_PATHS_KEY}" "Path" "$INSTDIR\bin"
+    ${Else}
+        WriteRegStr HKCU "${APP_PATHS_KEY}" "" "$INSTDIR\bin\mush.exe"
+        WriteRegStr HKCU "${APP_PATHS_KEY}" "Path" "$INSTDIR\bin"
+    ${EndIf}
+
     ; --- Add to PATH ---
     ${If} $OptAddToPath == ${BST_CHECKED}
         StrCpy $R8 "$INSTDIR\bin"
@@ -128,6 +137,14 @@ Section "Mush Shell" SecMain
             WriteRegStr HKCU "Environment" "COMSPEC" "$INSTDIR\bin\mush.exe"
         ${EndIf}
         SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+    ${EndIf}
+
+    ; --- OpenSSH default shell ---
+    ${If} $OptOpenSSHShell == ${BST_CHECKED}
+        ${If} $InstallMode == "system"
+            WriteRegStr HKLM "SOFTWARE\OpenSSH" "DefaultShell" "$INSTDIR\bin\mush.exe"
+            WriteRegStr HKLM "${UNINSTALL_KEY}" "OpenSSHShell" "1"
+        ${EndIf}
     ${EndIf}
 
     ; --- Install Bun runtime ---
@@ -230,6 +247,17 @@ Section "Uninstall"
         SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
     ${EndIf}
 
+    ; --- Restore OpenSSH default shell if we changed it ---
+    ${If} $InstallMode == "system"
+        ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "OpenSSHShell"
+        ${If} $0 == "1"
+            ReadRegStr $0 HKLM "SOFTWARE\OpenSSH" "DefaultShell"
+            ${If} $0 == "$INSTDIR\bin\mush.exe"
+                DeleteRegValue HKLM "SOFTWARE\OpenSSH" "DefaultShell"
+            ${EndIf}
+        ${EndIf}
+    ${EndIf}
+
     ; --- Remove Windows Terminal profile ---
     Call un.RemoveWindowsTerminalProfile
 
@@ -269,6 +297,13 @@ Section "Uninstall"
     ; Remove uninstaller itself
     Delete "$INSTDIR\uninstall.exe"
     RMDir "$INSTDIR"
+
+    ; --- Remove App Paths registration ---
+    ${If} $InstallMode == "system"
+        DeleteRegKey HKLM "${APP_PATHS_KEY}"
+    ${Else}
+        DeleteRegKey HKCU "${APP_PATHS_KEY}"
+    ${EndIf}
 
     ; --- Remove registry entries ---
     ${If} $InstallMode == "system"

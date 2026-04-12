@@ -12,11 +12,13 @@ Var ChkAddToPath
 Var ChkWindowsTerminal
 Var ChkStartMenu
 Var ChkSetDefaultShell
+Var ChkOpenSSHShell
 
 Var OptAddToPath
 Var OptWindowsTerminal
 Var OptStartMenu
 Var OptSetDefaultShell
+Var OptOpenSSHShell
 
 ; Register the custom page
 Page custom OptionsPage OptionsPageLeave
@@ -68,6 +70,20 @@ Function OptionsPage
     Pop $0
     SetCtlColors $0 "888888" transparent
 
+    ; --- Set as OpenSSH default shell ---
+    ${NSD_CreateCheckbox} 20u 126u 280u 16u "Set Mush as default &OpenSSH shell"
+    Pop $ChkOpenSSHShell
+    ${NSD_SetState} $ChkOpenSSHShell ${BST_UNCHECKED}
+
+    ${NSD_CreateLabel} 40u 142u 260u 20u "Sets Mush as the shell for incoming SSH sessions. Requires system install."
+    Pop $0
+    SetCtlColors $0 "888888" transparent
+
+    ; Disable if not a system install
+    ${If} $InstallMode != "system"
+        EnableWindow $ChkOpenSSHShell 0
+    ${EndIf}
+
     nsDialogs::Show
 FunctionEnd
 
@@ -79,6 +95,7 @@ Function OptionsPageLeave
     ${NSD_GetState} $ChkWindowsTerminal $OptWindowsTerminal
     ${NSD_GetState} $ChkStartMenu $OptStartMenu
     ${NSD_GetState} $ChkSetDefaultShell $OptSetDefaultShell
+    ${NSD_GetState} $ChkOpenSSHShell $OptOpenSSHShell
 FunctionEnd
 
 !endif ; OPTIONS_NSH
