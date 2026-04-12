@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use diff::cli::DiffConfig;
-use diff::ops::{compute_diff, format_normal, format_side_by_side, format_unified};
+use diff::ops::{compute_diff, format_github, format_normal, format_side_by_side, format_unified};
 
 fn main() -> ExitCode {
     let config = DiffConfig::parse();
@@ -45,7 +45,9 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
-    let output = if config.unified.is_some() {
+    let output = if config.github {
+        format_github(&hunks, &config.file1, &config.file2, config.color)
+    } else if config.unified.is_some() {
         format_unified(&hunks, &config.file1, &config.file2, config.color)
     } else if config.side_by_side {
         format_side_by_side(&hunks, &lines1, &lines2, config.width)

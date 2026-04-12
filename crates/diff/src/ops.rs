@@ -106,6 +106,8 @@ pub fn compute_diff(lines1: &[&str], lines2: &[&str], config: &DiffConfig) -> Ve
         config.unified.unwrap_or(3)
     } else if config.context.is_some() {
         config.context.unwrap_or(3)
+    } else if config.github {
+        3
     } else if config.side_by_side {
         0
     } else {
@@ -113,8 +115,8 @@ pub fn compute_diff(lines1: &[&str], lines2: &[&str], config: &DiffConfig) -> Ve
         0
     };
 
-    // For unified/context formats, we group changes with context
-    if config.unified.is_some() || config.context.is_some() {
+    // For unified/context/github formats, we group changes with context
+    if config.unified.is_some() || config.context.is_some() || config.github {
         return build_hunks_with_context(&edits, ctx);
     }
 
@@ -319,6 +321,53 @@ pub fn format_unified(hunks: &[DiffHunk], file1: &str, file2: &str, color: bool)
                 DiffLine::Context(line) => output.push(format!(" {line}")),
                 DiffLine::Removed(line) => output.push(format!("{red}-{line}{reset}")),
                 DiffLine::Added(line) => output.push(format!("{green}+{line}{reset}")),
+            }
+        }
+    }
+
+    output
+}
+
+/// Format hunks in GitHub-style diff format with dual line numbers and color-coded +/-.
+pub fn format_github(hunks: &[DiffHunk], file1: &str, file2: &str, color: bool) -> Vec<String> {
+    let mut output = Vec::new();
+    if hunks.is_empty() {
+        return output;
+    }
+
+    let (red_bg, green_bg, cyan, reset, dim) = if color {
+        ("\x1b[41m", "\x1b[42m", "\x1b[36m", "\x1b[0m", "\x1b[2m")
+    } else {
+        ("", "", "", "", "")
+    };
+
+    output.push(format!("{dim}--- a/{file1}{reset}"));
+    output.push(format!("{dim}+++ b/{file2}{reset}"));
+
+    for hunk in hunks {
+        output.push(format!(
+            "{cyan}@@ -{},{} +{},{} @@{reset}",
+            hunk.start1, hunk.count1, hunk.start2, hunk.count2
+        ));
+
+        let mut old_line = hunk.start1;
+        let mut new_line = hunk.start2;
+
+        for change in &hunk.changes {
+            match change {
+                DiffLine::Context(line) => {
+                    output.push(format!("{dim}{old_line:>4} {new_line:>4}{reset}   {line}"));
+                    old_line += 1;
+                    new_line += 1;
+                }
+                DiffLine::Removed(line) => {
+                    output.push(format!("{red_bg}{old_line:>4}     {reset} {red_bg}-{reset} {red_bg}{line}{reset}"));
+                    old_line += 1;
+                }
+                DiffLine::Added(line) => {
+                    output.push(format!("{green_bg}     {new_line:>4}{reset} {green_bg}+{reset} {green_bg}{line}{reset}"));
+                    new_line += 1;
+                }
             }
         }
     }

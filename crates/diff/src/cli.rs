@@ -42,6 +42,9 @@ pub struct DiffConfig {
     #[arg(long, help = "Colorize the output")]
     pub color: bool,
 
+    #[arg(long, help = "Output in GitHub-style diff format with line numbers")]
+    pub github: bool,
+
     pub file1: String,
 
     pub file2: String,
