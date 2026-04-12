@@ -1274,7 +1274,11 @@ impl App {
             }
         } else {
             self.last_help_prefix = None;
-            self.autocomplete.update(&input);
+            if autocomplete::is_path_like(&input) {
+                self.autocomplete.update_with_paths_command(&input);
+            } else {
+                self.autocomplete.update(&input);
+            }
         }
     }
 

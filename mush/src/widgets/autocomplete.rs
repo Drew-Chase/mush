@@ -200,6 +200,77 @@ impl Autocomplete {
         self.visible = !self.suggestions.is_empty();
     }
 
+    /// Populates suggestions with filesystem entries for the command position.
+    /// Unlike `update_with_paths()`, there is no command prefix — the path IS
+    /// the command (e.g. `./program.exe`, `../bin/tool`).
+    pub fn update_with_paths_command(&mut self, partial_path: &str) {
+        self.current_prefix = None;
+        self.pipe_prefix = None;
+
+        let (dir, file_prefix, display_base) = split_path(partial_path);
+
+        // path_base with no leading command — accept() will produce just the path
+        self.path_base = Some(display_base);
+
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => {
+                self.visible = false;
+                self.suggestions.clear();
+                self.selected = 0;
+                return;
+            }
+        };
+
+        let prefix_lower = file_prefix.to_lowercase();
+        let mut dirs: Vec<Suggestion> = Vec::new();
+        let mut files: Vec<Suggestion> = Vec::new();
+
+        for entry in entries.flatten().take(500) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let name_lower = name.to_lowercase();
+
+            if !prefix_lower.is_empty() && !name_lower.starts_with(&prefix_lower) {
+                continue;
+            }
+
+            let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+            let display_name = if is_dir {
+                format!("{name}/")
+            } else {
+                name
+            };
+            let desc = if is_dir {
+                Some("<DIR>".to_string())
+            } else {
+                None
+            };
+
+            let suggestion = Suggestion {
+                name: display_name,
+                display_name: None,
+                description: desc,
+            };
+            if is_dir {
+                dirs.push(suggestion);
+            } else {
+                files.push(suggestion);
+            }
+
+            if dirs.len() + files.len() >= 100 {
+                break;
+            }
+        }
+
+        dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+        self.suggestions = dirs;
+        self.suggestions.extend(files);
+        self.selected = 0;
+        self.visible = !self.suggestions.is_empty();
+    }
+
     /// Populates suggestions with output lines from a preceding pipeline,
     /// filtered by the partial argument the user is typing.
     pub fn update_with_pipe_output(
