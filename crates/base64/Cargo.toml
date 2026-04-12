@@ -6,6 +6,3 @@ edition = "2024"
 [dependencies]
 clap.workspace = true
 data-encoding = "2"
-
-[dev-dependencies]
-tempfile = "3"
