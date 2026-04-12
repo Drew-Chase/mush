@@ -336,7 +336,8 @@ pub fn format_github(hunks: &[DiffHunk], file1: &str, file2: &str, color: bool) 
     }
 
     let (red_bg, green_bg, cyan, reset, dim) = if color {
-        ("\x1b[41m", "\x1b[42m", "\x1b[36m", "\x1b[0m", "\x1b[2m")
+        // 256-color: dark red bg (52) / dark green bg (22) with white text for readability
+        ("\x1b[48;5;52m\x1b[37m", "\x1b[48;5;22m\x1b[37m", "\x1b[36m", "\x1b[0m", "\x1b[2m")
     } else {
         ("", "", "", "", "")
     };
@@ -361,11 +362,11 @@ pub fn format_github(hunks: &[DiffHunk], file1: &str, file2: &str, color: bool) 
                     new_line += 1;
                 }
                 DiffLine::Removed(line) => {
-                    output.push(format!("{red_bg}{old_line:>4}     {reset} {red_bg}-{reset} {red_bg}{line}{reset}"));
+                    output.push(format!("{dim}{old_line:>4}     {reset} {red_bg}- {line}{reset}"));
                     old_line += 1;
                 }
                 DiffLine::Added(line) => {
-                    output.push(format!("{green_bg}     {new_line:>4}{reset} {green_bg}+{reset} {green_bg}{line}{reset}"));
+                    output.push(format!("{dim}     {new_line:>4}{reset} {green_bg}+ {line}{reset}"));
                     new_line += 1;
                 }
             }
