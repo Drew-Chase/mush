@@ -1,18 +1,4 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-const HELP_TEXT: &str = "\
-Usage: kill [-s SIGNAL | -SIGNAL] PID...
-       kill -l [SIGNAL]
-       kill -L
-Send a signal to a process.
-
-  -s SIGNAL        specify the signal to send
-  -l, --list       list signal names, or convert signal number to name
-  -L, --table      list signal names in a table
-      --help       display this help and exit
-      --version    output version information and exit
-
-Signals: HUP(1) INT(2) QUIT(3) KILL(9) USR1(10) USR2(12) TERM(15) CONT(18) STOP(19)";
+use clap::Parser;
 
 const SIGNALS: &[(i32, &str)] = &[
     (1, "HUP"),
@@ -26,14 +12,6 @@ const SIGNALS: &[(i32, &str)] = &[
     (19, "STOP"),
 ];
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct KillConfig {
-    pub signal: i32,
-    pub list: bool,
-    pub table: bool,
-    pub pids: Vec<u32>,
-}
-
 fn parse_signal_name(name: &str) -> Option<i32> {
     let upper = name.to_ascii_uppercase();
     let upper = upper.strip_prefix("SIG").unwrap_or(&upper);
@@ -45,33 +23,64 @@ fn parse_signal_name(name: &str) -> Option<i32> {
     None
 }
 
+#[derive(Parser, Debug, Clone, Default, PartialEq, Eq)]
+#[command(
+    name = "kill",
+    about = "Send a signal to a process.",
+    version,
+    disable_help_flag = true,
+    allow_hyphen_values = true
+)]
+pub struct KillConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    /// Specify the signal to send
+    #[arg(short = 's', long, default_value_t = 15)]
+    pub signal: i32,
+
+    /// List signal names, or convert signal number to name
+    #[arg(short = 'l', long = "list")]
+    pub list: bool,
+
+    /// List signal names in a table
+    #[arg(short = 'L', long = "table")]
+    pub table: bool,
+
+    /// Process IDs
+    #[arg(skip)]
+    pub pids: Vec<u32>,
+}
+
 impl KillConfig {
+    /// Custom parsing to handle -9, -KILL, -SIGTERM style signal args
+    /// that clap cannot parse natively.
     pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = KillConfig {
-            signal: 15, // default SIGTERM
-            ..Default::default()
-        };
+        let mut signal: i32 = 15;
         let mut signal_set = false;
+        let mut list = false;
+        let mut table = false;
+        let mut pids = Vec::new();
         let mut i = 0;
 
         while i < args.len() {
             let arg = &args[i];
 
             if arg == "--help" {
-                println!("{HELP_TEXT}");
+                let _ = Self::try_parse_from(["kill", "--help"]);
                 return None;
             }
             if arg == "--version" {
-                println!("kill {VERSION}");
+                let _ = Self::try_parse_from(["kill", "--version"]);
                 return None;
             }
             if arg == "--list" || arg == "-l" {
-                config.list = true;
+                list = true;
                 i += 1;
                 continue;
             }
             if arg == "--table" || arg == "-L" {
-                config.table = true;
+                table = true;
                 i += 1;
                 continue;
             }
@@ -80,10 +89,10 @@ impl KillConfig {
                 if i < args.len() {
                     let sig_arg = &args[i];
                     if let Ok(num) = sig_arg.parse::<i32>() {
-                        config.signal = num;
+                        signal = num;
                         signal_set = true;
                     } else if let Some(num) = parse_signal_name(sig_arg) {
-                        config.signal = num;
+                        signal = num;
                         signal_set = true;
                     } else {
                         eprintln!("kill: unknown signal '{sig_arg}'");
@@ -99,13 +108,13 @@ impl KillConfig {
             if arg.starts_with('-') && arg.len() > 1 {
                 let sig_str = &arg[1..];
                 if let Ok(num) = sig_str.parse::<i32>() {
-                    config.signal = num;
+                    signal = num;
                     signal_set = true;
                     i += 1;
                     continue;
                 }
                 if let Some(num) = parse_signal_name(sig_str) {
-                    config.signal = num;
+                    signal = num;
                     signal_set = true;
                     i += 1;
                     continue;
@@ -118,7 +127,7 @@ impl KillConfig {
 
             // Positional: PID
             if let Ok(pid) = arg.parse::<u32>() {
-                config.pids.push(pid);
+                pids.push(pid);
             } else {
                 eprintln!("kill: invalid PID '{arg}'");
             }
@@ -126,6 +135,12 @@ impl KillConfig {
         }
 
         let _ = signal_set;
-        Some(config)
+        Some(KillConfig {
+            help: None,
+            signal,
+            list,
+            table,
+            pids,
+        })
     }
 }

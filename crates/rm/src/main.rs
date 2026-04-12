@@ -2,14 +2,18 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use rm::cli::{InteractiveMode, RmConfig};
 use rm::ops::remove_path;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = RmConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
+    let config = match RmConfig::parse().resolve() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
     };
 
     if config.paths.is_empty() {

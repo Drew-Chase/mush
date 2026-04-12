@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use patch::cli::PatchConfig;
 use patch::ops::{apply_hunk, apply_patch_to_string, parse_patch, strip_path, DiffLine, Hunk};
 
 fn parse(args: &[&str]) -> PatchConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    PatchConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["patch"];
+    full.extend_from_slice(args);
+    PatchConfig::parse_from(full)
 }
 
 #[test]
@@ -17,7 +20,7 @@ fn default_config() {
 
 #[test]
 fn parse_strip() {
-    let config = parse(&["-p1"]);
+    let config = parse(&["-p", "1"]);
     assert_eq!(config.strip, 1);
 }
 
@@ -52,15 +55,13 @@ fn parse_input_file() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(PatchConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    assert!(PatchConfig::try_parse_from(["patch", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(PatchConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(PatchConfig::try_parse_from(["patch", "--version"]).is_err());
 }
 
 #[test]

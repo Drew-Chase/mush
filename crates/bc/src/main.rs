@@ -2,15 +2,13 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use bc::cli::BcConfig;
 use bc::ops::{BcState, bc_repl};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = BcConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = BcConfig::parse();
 
     let mut state = BcState::new(config.math_lib);
 

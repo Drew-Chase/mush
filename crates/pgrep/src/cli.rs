@@ -1,40 +1,65 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
 
-const HELP_TEXT: &str = "\
-Usage: pgrep [OPTIONS] PATTERN
-Look up processes by name pattern.
-
-  -l, --list-name    list PID and process name
-  -a, --list-full    list PID and full command line
-  -c, --count        display count of matching processes
-  -d, --delimiter D  set output delimiter (default: newline)
-  -f, --full         match against full command line
-  -i, --ignore-case  case-insensitive matching
-  -x, --exact        require exact match of process name
-  -u, --euid USER    match only processes owned by USER
-  -n, --newest       select most recently started
-  -o, --oldest       select least recently started
-      --help         display this help and exit
-      --version      output version information and exit";
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Parser, Debug, Clone, PartialEq)]
+#[command(
+    name = "pgrep",
+    about = "Look up processes by name pattern.",
+    version,
+    disable_help_flag = true
+)]
 pub struct PgrepConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    /// List PID and process name
+    #[arg(short = 'l', long = "list-name")]
     pub list_name: bool,
+
+    /// List PID and full command line
+    #[arg(short = 'a', long = "list-full")]
     pub list_full: bool,
+
+    /// Display count of matching processes
+    #[arg(short = 'c', long = "count")]
     pub count: bool,
+
+    /// Set output delimiter (default: newline)
+    #[arg(short = 'd', long = "delimiter", default_value = "\n")]
     pub delimiter: String,
+
+    /// Match against full command line
+    #[arg(short = 'f', long = "full")]
     pub full: bool,
+
+    /// Case-insensitive matching
+    #[arg(short = 'i', long = "ignore-case")]
     pub ignore_case: bool,
+
+    /// Require exact match of process name
+    #[arg(short = 'x', long = "exact")]
     pub exact: bool,
+
+    /// Match only processes owned by USER
+    #[arg(short = 'u', long = "euid")]
     pub user_filter: Option<String>,
+
+    /// Select most recently started
+    #[arg(short = 'n', long = "newest")]
     pub newest: bool,
+
+    /// Select least recently started
+    #[arg(short = 'o', long = "oldest")]
     pub oldest: bool,
+
+    /// Pattern to match
+    #[arg(default_value = "")]
     pub pattern: String,
 }
 
 impl Default for PgrepConfig {
     fn default() -> Self {
         Self {
+            help: None,
             list_name: false,
             list_full: false,
             count: false,
@@ -47,69 +72,5 @@ impl Default for PgrepConfig {
             oldest: false,
             pattern: String::new(),
         }
-    }
-}
-
-impl PgrepConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = PgrepConfig::default();
-        let mut i = 0;
-        let mut positional = Vec::new();
-
-        while i < args.len() {
-            let arg = &args[i];
-
-            match arg.as_str() {
-                "--help" => {
-                    println!("{HELP_TEXT}");
-                    return None;
-                }
-                "--version" => {
-                    println!("pgrep {VERSION}");
-                    return None;
-                }
-                "-l" | "--list-name" => config.list_name = true,
-                "-a" | "--list-full" => config.list_full = true,
-                "-c" | "--count" => config.count = true,
-                "-f" | "--full" => config.full = true,
-                "-i" | "--ignore-case" => config.ignore_case = true,
-                "-x" | "--exact" => config.exact = true,
-                "-n" | "--newest" => config.newest = true,
-                "-o" | "--oldest" => config.oldest = true,
-                "-d" | "--delimiter" => {
-                    i += 1;
-                    if i < args.len() {
-                        config.delimiter = args[i].clone();
-                    } else {
-                        eprintln!("pgrep: option '{arg}' requires an argument");
-                    }
-                }
-                "-u" | "--euid" => {
-                    i += 1;
-                    if i < args.len() {
-                        config.user_filter = Some(args[i].clone());
-                    } else {
-                        eprintln!("pgrep: option '{arg}' requires an argument");
-                    }
-                }
-                _ => {
-                    if arg.starts_with('-') {
-                        eprintln!("pgrep: unknown option '{arg}'");
-                    } else {
-                        positional.push(arg.clone());
-                    }
-                }
-            }
-            i += 1;
-        }
-
-        if positional.is_empty() {
-            eprintln!("pgrep: no matching criteria specified");
-            eprintln!("Try 'pgrep --help' for more information.");
-            return Some(config);
-        }
-
-        config.pattern = positional[0].clone();
-        Some(config)
     }
 }

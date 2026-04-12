@@ -1,24 +1,4 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-const HELP_TEXT: &str = "\
-Usage: rm [OPTION]... [FILE]...
-Remove (unlink) the FILE(s).
-
-  -f, --force           ignore nonexistent files and arguments, never prompt
-  -i                    prompt before every removal
-  -I                    prompt once before removing more than three files, or
-                          when removing recursively
-      --interactive[=WHEN]  prompt according to WHEN: never, once (-I), or
-                          always (-i); without WHEN, assume always
-  -r, -R, --recursive   remove directories and their contents recursively
-  -d, --dir             remove empty directories
-  -v, --verbose         explain what is being done
-      --no-preserve-root  do not treat '/' specially
-      --preserve-root[=all]  do not remove '/' (default);
-                          with 'all', reject any command line argument
-                          on a separate device from its parent
-      --help            display this help and exit
-      --version         output version information and exit";
+use clap::Parser;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum InteractiveMode {
@@ -28,169 +8,146 @@ pub enum InteractiveMode {
     Always,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[command(
+    name = "rm",
+    about = "Remove (unlink) the FILE(s).",
+    version,
+    disable_help_flag = true
+)]
 pub struct RmConfig {
-    pub force: bool,
-    pub interactive: InteractiveMode,
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    /// Ignore nonexistent files and arguments, never prompt
+    #[arg(short = 'f', long = "force")]
+    pub force_flag: bool,
+
+    /// Prompt before every removal
+    #[arg(short = 'i')]
+    pub interactive_always: bool,
+
+    /// Prompt once before removing more than three files or when removing recursively
+    #[arg(short = 'I')]
+    pub interactive_once: bool,
+
+    /// Prompt according to WHEN: never, once (-I), or always (-i)
+    #[arg(long = "interactive", value_name = "WHEN", num_args = 0..=1, default_missing_value = "always", require_equals = true)]
+    pub interactive_when: Option<String>,
+
+    /// Remove directories and their contents recursively
+    #[arg(short = 'r', short_alias = 'R', long = "recursive")]
     pub recursive: bool,
+
+    /// Remove empty directories
+    #[arg(short = 'd', long = "dir")]
     pub dir: bool,
+
+    /// Explain what is being done
+    #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
-    pub preserve_root: bool,
-    pub preserve_root_all: bool,
+
+    /// Do not treat '/' specially
+    #[arg(long = "no-preserve-root")]
+    pub no_preserve_root: bool,
+
+    /// Do not remove '/' (default); with 'all', reject any command line argument on a separate device
+    #[arg(long = "preserve-root", value_name = "all")]
+    pub preserve_root_flag: Option<Option<String>>,
+
+    /// Files to remove
+    #[arg()]
     pub paths: Vec<String>,
+
+    #[arg(skip)]
+    pub force: bool,
+
+    #[arg(skip)]
+    pub interactive: InteractiveMode,
+
+    #[arg(skip = true)]
+    pub preserve_root: bool,
+
+    #[arg(skip)]
+    pub preserve_root_all: bool,
 }
 
 impl Default for RmConfig {
     fn default() -> Self {
         Self {
-            force: false,
-            interactive: InteractiveMode::Never,
+            help: None,
+            force_flag: false,
+            interactive_always: false,
+            interactive_once: false,
+            interactive_when: None,
             recursive: false,
             dir: false,
             verbose: false,
+            no_preserve_root: false,
+            preserve_root_flag: None,
+            paths: Vec::new(),
+            force: false,
+            interactive: InteractiveMode::Never,
             preserve_root: true,
             preserve_root_all: false,
-            paths: Vec::new(),
         }
     }
 }
 
 impl RmConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = RmConfig::default();
-        let mut i = 0;
-        let mut parsing_flags = true;
+    /// Resolve computed fields from the raw clap flags.
+    /// Must be called after parsing.
+    pub fn resolve(mut self) -> Result<Self, String> {
+        // Default preserve_root to true
+        self.preserve_root = true;
 
-        while i < args.len() {
-            let arg = &args[i];
-
-            if !parsing_flags || !arg.starts_with('-') || arg == "-" {
-                config.paths.push(arg.clone());
-                i += 1;
-                continue;
-            }
-
-            if arg == "--" {
-                parsing_flags = false;
-                i += 1;
-                continue;
-            }
-
-            if arg == "--help" {
-                println!("{HELP_TEXT}");
-                return None;
-            }
-            if arg == "--version" {
-                println!("rm {VERSION}");
-                return None;
-            }
-            if arg == "--force" {
-                config.force = true;
-                config.interactive = InteractiveMode::Never;
-                i += 1;
-                continue;
-            }
-            if arg == "--recursive" {
-                config.recursive = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--dir" {
-                config.dir = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--verbose" {
-                config.verbose = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--no-preserve-root" {
-                config.preserve_root = false;
-                i += 1;
-                continue;
-            }
-            if arg == "--preserve-root" {
-                config.preserve_root = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--preserve-root=all" {
-                config.preserve_root = true;
-                config.preserve_root_all = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--interactive" {
-                config.interactive = InteractiveMode::Always;
-                config.force = false;
-                i += 1;
-                continue;
-            }
-            if let Some(when) = arg.strip_prefix("--interactive=") {
-                match when {
-                    "never" => {
-                        config.interactive = InteractiveMode::Never;
-                    }
-                    "once" => {
-                        config.interactive = InteractiveMode::Once;
-                        config.force = false;
-                    }
-                    "always" => {
-                        config.interactive = InteractiveMode::Always;
-                        config.force = false;
-                    }
-                    _ => {
-                        eprintln!("rm: invalid argument '{when}' for '--interactive'");
-                        eprintln!("Valid arguments are: 'never', 'once', 'always'");
-                        return None;
-                    }
-                }
-                i += 1;
-                continue;
-            }
-
-            let chars: Vec<char> = arg[1..].chars().collect();
-            let mut valid = true;
-            for &c in &chars {
-                match c {
-                    'f' | 'r' | 'R' | 'i' | 'I' | 'd' | 'v' => {}
-                    _ => {
-                        eprintln!("rm: invalid option -- '{c}'");
-                        valid = false;
-                        break;
-                    }
-                }
-            }
-            if !valid {
-                config.paths.push(arg.clone());
-                i += 1;
-                continue;
-            }
-
-            for &c in &chars {
-                match c {
-                    'f' => {
-                        config.force = true;
-                        config.interactive = InteractiveMode::Never;
-                    }
-                    'r' | 'R' => config.recursive = true,
-                    'i' => {
-                        config.interactive = InteractiveMode::Always;
-                        config.force = false;
-                    }
-                    'I' => {
-                        config.interactive = InteractiveMode::Once;
-                        config.force = false;
-                    }
-                    'd' => config.dir = true,
-                    'v' => config.verbose = true,
-                    _ => unreachable!(),
-                }
-            }
-            i += 1;
+        if self.no_preserve_root {
+            self.preserve_root = false;
         }
 
-        Some(config)
+        if let Some(ref val) = self.preserve_root_flag {
+            self.preserve_root = true;
+            if let Some(s) = val
+                && s == "all"
+            {
+                self.preserve_root_all = true;
+            }
+        }
+
+        // Resolve interactive mode.
+        // The last-specified flag wins, but with clap we process in order:
+        // --interactive=WHEN takes precedence if set, otherwise check -f, -i, -I.
+        if let Some(ref when) = self.interactive_when {
+            match when.as_str() {
+                "never" => {
+                    self.interactive = InteractiveMode::Never;
+                }
+                "once" => {
+                    self.interactive = InteractiveMode::Once;
+                    self.force = false;
+                }
+                "always" => {
+                    self.interactive = InteractiveMode::Always;
+                    self.force = false;
+                }
+                _ => {
+                    return Err(format!(
+                        "rm: invalid argument '{}' for '--interactive'\nValid arguments are: 'never', 'once', 'always'",
+                        when
+                    ));
+                }
+            }
+        } else if self.force_flag {
+            self.force = true;
+            self.interactive = InteractiveMode::Never;
+        } else if self.interactive_always {
+            self.interactive = InteractiveMode::Always;
+            self.force = false;
+        } else if self.interactive_once {
+            self.interactive = InteractiveMode::Once;
+            self.force = false;
+        }
+
+        Ok(self)
     }
 }

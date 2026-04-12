@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use pkill::cli::PkillConfig;
 
 fn parse(args: &[&str]) -> PkillConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    PkillConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["pkill"];
+    full.extend_from_slice(args);
+    PkillConfig::parse_from(full)
 }
 
 #[test]
@@ -103,15 +106,13 @@ fn long_oldest() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(PkillConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    assert!(PkillConfig::try_parse_from(["pkill", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(PkillConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(PkillConfig::try_parse_from(["pkill", "--version"]).is_err());
 }
 
 #[test]

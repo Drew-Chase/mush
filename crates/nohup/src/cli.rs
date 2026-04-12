@@ -1,40 +1,17 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
 
-const HELP_TEXT: &str = "\
-Usage: nohup COMMAND [ARG]...
-
-Run COMMAND, ignoring hangup signals.
-
-If standard output is a terminal, redirect it to 'nohup.out'.
-
-      --help     display this help and exit
-      --version  output version information and exit";
-
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Parser, Debug, Clone, Default, PartialEq)]
+#[command(
+    name = "nohup",
+    about = "Run COMMAND, ignoring hangup signals.",
+    version,
+    disable_help_flag = true
+)]
 pub struct NohupConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    /// Command and arguments to run
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<String>,
-}
-
-impl NohupConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        if args.is_empty() {
-            eprintln!("nohup: missing operand");
-            return Some(NohupConfig::default());
-        }
-
-        match args[0].as_str() {
-            "--help" => {
-                println!("{HELP_TEXT}");
-                None
-            }
-            "--version" => {
-                println!("nohup {VERSION}");
-                None
-            }
-            _ => {
-                // Everything is the command + args
-                Some(NohupConfig { command: args.to_vec() })
-            }
-        }
-    }
 }

@@ -1,11 +1,14 @@
 use std::io::Cursor;
 
+use clap::Parser;
+
 use paste_cmd::cli::PasteConfig;
 use paste_cmd::ops;
 
 fn parse(args: &[&str]) -> PasteConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    PasteConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["paste"];
+    full.extend_from_slice(args);
+    PasteConfig::parse_from(full)
 }
 
 fn run_paste(inputs: &[&str], args: &[&str]) -> String {

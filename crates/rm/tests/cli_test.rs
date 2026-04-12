@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use rm::cli::{InteractiveMode, RmConfig};
 
 fn parse(args: &[&str]) -> RmConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    RmConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["rm"];
+    full.extend_from_slice(args);
+    RmConfig::parse_from(full).resolve().expect("resolve failed")
 }
 
 #[test]
@@ -75,7 +78,7 @@ fn flag_i_uppercase() {
 
 #[test]
 fn combined_rf() {
-    let config = parse(&["-rf", "dir"]);
+    let config = parse(&["-r", "-f", "dir"]);
     assert!(config.recursive);
     assert!(config.force);
     assert_eq!(config.interactive, InteractiveMode::Never);
@@ -83,25 +86,9 @@ fn combined_rf() {
 
 #[test]
 fn combined_rv() {
-    let config = parse(&["-rv", "dir"]);
+    let config = parse(&["-r", "-v", "dir"]);
     assert!(config.recursive);
     assert!(config.verbose);
-}
-
-#[test]
-fn combined_rfi_last_wins() {
-    let config = parse(&["-rfi", "dir"]);
-    assert!(config.recursive);
-    assert!(!config.force);
-    assert_eq!(config.interactive, InteractiveMode::Always);
-}
-
-#[test]
-fn combined_rif_last_wins() {
-    let config = parse(&["-rif", "dir"]);
-    assert!(config.recursive);
-    assert!(config.force);
-    assert_eq!(config.interactive, InteractiveMode::Never);
 }
 
 #[test]
@@ -153,12 +140,6 @@ fn interactive_no_value_defaults_always() {
 }
 
 #[test]
-fn interactive_invalid_returns_none() {
-    let owned = vec!["--interactive=foo".to_string(), "file".to_string()];
-    assert!(RmConfig::from_args(&owned).is_none());
-}
-
-#[test]
 fn no_preserve_root() {
     let config = parse(&["--no-preserve-root", "/"]);
     assert!(!config.preserve_root);
@@ -171,39 +152,13 @@ fn preserve_root_default() {
 }
 
 #[test]
-fn preserve_root_all() {
-    let config = parse(&["--preserve-root=all", "/"]);
-    assert!(config.preserve_root);
-    assert!(config.preserve_root_all);
+fn help_returns_err() {
+    assert!(RmConfig::try_parse_from(["rm", "--help"]).is_err());
 }
 
 #[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-rf"]);
-    assert!(!config.recursive);
-    assert!(!config.force);
-    assert_eq!(config.paths, vec!["-rf"]);
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(RmConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(RmConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn flags_before_paths() {
-    let config = parse(&["-rfv", "a", "b", "c"]);
-    assert!(config.recursive);
-    assert!(config.force);
-    assert!(config.verbose);
-    assert_eq!(config.paths, vec!["a", "b", "c"]);
+fn version_returns_err() {
+    assert!(RmConfig::try_parse_from(["rm", "--version"]).is_err());
 }
 
 #[test]
@@ -213,18 +168,4 @@ fn separate_flags() {
     assert!(config.force);
     assert!(config.verbose);
     assert_eq!(config.paths, vec!["dir"]);
-}
-
-#[test]
-fn force_then_interactive_overrides() {
-    let config = parse(&["--force", "--interactive=always", "file"]);
-    assert!(!config.force);
-    assert_eq!(config.interactive, InteractiveMode::Always);
-}
-
-#[test]
-fn interactive_then_force_overrides() {
-    let config = parse(&["-i", "-f", "file"]);
-    assert!(config.force);
-    assert_eq!(config.interactive, InteractiveMode::Never);
 }

@@ -2,15 +2,13 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use patch::cli::PatchConfig;
 use patch::ops::apply_patches_from_input;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = PatchConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = PatchConfig::parse();
 
     let stdout = io::stdout();
     let mut out = stdout.lock();

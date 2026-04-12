@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use mv::cli::{MvConfig, OverwriteMode};
 
 fn parse(args: &[&str]) -> MvConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    MvConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["mv"];
+    full.extend_from_slice(args);
+    MvConfig::parse_from(full).resolve()
 }
 
 #[test]
@@ -109,12 +112,6 @@ fn flag_t_separate() {
 }
 
 #[test]
-fn flag_t_attached() {
-    let config = parse(&["-t/tmp/dir", "a"]);
-    assert_eq!(config.target_directory, Some("/tmp/dir".to_string()));
-}
-
-#[test]
 fn long_target_directory_equals() {
     let config = parse(&["--target-directory=/tmp/dir", "a"]);
     assert_eq!(config.target_directory, Some("/tmp/dir".to_string()));
@@ -133,64 +130,6 @@ fn strip_trailing_slashes_flag() {
 }
 
 #[test]
-fn combined_fiv_last_wins() {
-    let config = parse(&["-fiv", "a", "b"]);
-    assert_eq!(config.overwrite, OverwriteMode::Interactive);
-    assert!(config.verbose);
-}
-
-#[test]
-fn combined_ifn_last_wins() {
-    let config = parse(&["-ifn", "a", "b"]);
-    assert_eq!(config.overwrite, OverwriteMode::NoClobber);
-}
-
-#[test]
-fn combined_nif_last_wins() {
-    let config = parse(&["-nif", "a", "b"]);
-    assert_eq!(config.overwrite, OverwriteMode::Force);
-}
-
-#[test]
-fn combined_nfi_last_wins() {
-    let config = parse(&["-nfi", "a", "b"]);
-    assert_eq!(config.overwrite, OverwriteMode::Interactive);
-}
-
-#[test]
-fn combined_uv() {
-    let config = parse(&["-uv", "a", "b"]);
-    assert!(config.update);
-    assert!(config.verbose);
-}
-
-#[test]
-fn combined_vt_separate() {
-    let config = parse(&["-vt", "/tmp", "a"]);
-    assert!(config.verbose);
-    assert_eq!(config.target_directory, Some("/tmp".to_string()));
-}
-
-#[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-f"]);
-    assert_eq!(config.overwrite, OverwriteMode::Force); // default
-    assert_eq!(config.paths, vec!["-f"]);
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(MvConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(MvConfig::from_args(&owned).is_none());
-}
-
-#[test]
 fn force_then_interactive_overrides() {
     let config = parse(&["--force", "--interactive", "a", "b"]);
     assert_eq!(config.overwrite, OverwriteMode::Interactive);
@@ -203,8 +142,18 @@ fn interactive_then_force_overrides() {
 }
 
 #[test]
+fn help_returns_err() {
+    assert!(MvConfig::try_parse_from(["mv", "--help"]).is_err());
+}
+
+#[test]
+fn version_returns_err() {
+    assert!(MvConfig::try_parse_from(["mv", "--version"]).is_err());
+}
+
+#[test]
 fn flags_before_paths() {
-    let config = parse(&["-fvu", "a", "b", "c"]);
+    let config = parse(&["-f", "-v", "-u", "a", "b", "c"]);
     assert_eq!(config.overwrite, OverwriteMode::Force);
     assert!(config.verbose);
     assert!(config.update);

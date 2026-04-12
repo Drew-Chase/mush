@@ -2,15 +2,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use mv::cli::MvConfig;
 use mv::ops::move_path;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = MvConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = MvConfig::parse().resolve();
 
     if config.paths.is_empty() {
         eprintln!("mv: missing file operand");

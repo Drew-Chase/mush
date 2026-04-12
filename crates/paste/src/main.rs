@@ -2,15 +2,13 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use paste_cmd::cli::PasteConfig;
 use paste_cmd::ops;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = PasteConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = PasteConfig::parse();
 
     let files = if config.files.is_empty() {
         vec!["-".to_string()]

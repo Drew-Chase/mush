@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use pgrep::cli::PgrepConfig;
 
 fn parse(args: &[&str]) -> PgrepConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    PgrepConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["pgrep"];
+    full.extend_from_slice(args);
+    PgrepConfig::parse_from(full)
 }
 
 #[test]
@@ -142,15 +145,13 @@ fn long_oldest() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(PgrepConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    assert!(PgrepConfig::try_parse_from(["pgrep", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(PgrepConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(PgrepConfig::try_parse_from(["pgrep", "--version"]).is_err());
 }
 
 #[test]

@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn test_empty_command() {
-        let config = NohupConfig { command: vec![] };
+        let config = NohupConfig { help: None, command: vec![] };
         let code = execute(&config);
         assert_eq!(code, ExitCode::from(127));
     }

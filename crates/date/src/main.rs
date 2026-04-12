@@ -1,13 +1,13 @@
 use std::process::ExitCode;
+
+use clap::Parser;
+
 use date::cli::DateConfig;
 use date::ops::{format_time, get_time};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = DateConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let config = DateConfig::parse().resolve(&raw_args);
 
     match get_time(&config) {
         Ok(dt) => {

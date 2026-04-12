@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use nohup::cli::NohupConfig;
 
 fn parse(args: &[&str]) -> NohupConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    NohupConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["nohup"];
+    full.extend_from_slice(args);
+    NohupConfig::parse_from(full)
 }
 
 #[test]
@@ -30,20 +33,17 @@ fn complex_command() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(NohupConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    assert!(NohupConfig::try_parse_from(["nohup", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(NohupConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(NohupConfig::try_parse_from(["nohup", "--version"]).is_err());
 }
 
 #[test]
 fn command_starting_with_dash() {
-    // If a command starts with something unknown, it's treated as the command
     let config = parse(&["my-program", "--flag"]);
     assert_eq!(config.command, vec!["my-program", "--flag"]);
 }

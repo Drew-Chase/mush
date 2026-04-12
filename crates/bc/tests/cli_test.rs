@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use bc::cli::BcConfig;
 use bc::ops::{BcState, bc_repl, eval_expression, format_value};
 
 fn parse(args: &[&str]) -> BcConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    BcConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["bc"];
+    full.extend_from_slice(args);
+    BcConfig::parse_from(full)
 }
 
 #[test]
@@ -20,15 +23,13 @@ fn parse_math_lib() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(BcConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    assert!(BcConfig::try_parse_from(["bc", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(BcConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(BcConfig::try_parse_from(["bc", "--version"]).is_err());
 }
 
 #[test]
