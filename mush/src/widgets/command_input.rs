@@ -13,6 +13,8 @@ pub struct CommandInput {
     pub valid_command: bool,
     pub notification: Option<(String, Instant)>,
     pub interactive_mode: bool,
+    /// Selection anchor byte offset. The selection range is between this and `cursor`.
+    pub selection: Option<usize>,
 }
 
 impl Default for CommandInput {
@@ -27,17 +29,68 @@ impl Default for CommandInput {
             valid_command: true,
             notification: None,
             interactive_mode: false,
+            selection: None,
         }
     }
 }
 
 impl CommandInput {
+    /// Returns (start, end) byte offsets of the selection, or None if no selection.
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        self.selection.and_then(|anchor| {
+            let start = anchor.min(self.cursor);
+            let end = anchor.max(self.cursor);
+            if start == end {
+                None
+            } else {
+                Some((start, end))
+            }
+        })
+    }
+
+    /// Set the anchor to current cursor position if not already set.
+    pub fn start_selection(&mut self) {
+        if self.selection.is_none() {
+            self.selection = Some(self.cursor);
+        }
+    }
+
+    /// Clear the selection.
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+
+    /// Delete the selected text and leave cursor at the start of the deleted range.
+    pub fn delete_selection(&mut self) {
+        if let Some((start, end)) = self.selection_range() {
+            self.buffer.drain(start..end);
+            self.cursor = start;
+            self.selection = None;
+        }
+    }
+
+    /// Select all text.
+    pub fn select_all(&mut self) {
+        if self.buffer.is_empty() {
+            return;
+        }
+        self.selection = Some(0);
+        self.cursor = self.buffer.len();
+    }
+
     pub fn insert_char(&mut self, c: char) {
+        if self.selection_range().is_some() {
+            self.delete_selection();
+        }
         self.buffer.insert(self.cursor, c);
         self.cursor += c.len_utf8();
     }
 
     pub fn backspace(&mut self) {
+        if self.selection_range().is_some() {
+            self.delete_selection();
+            return;
+        }
         if self.cursor > 0 {
             // Find the previous char boundary
             let prev = self.buffer[..self.cursor]
@@ -51,12 +104,46 @@ impl CommandInput {
     }
 
     pub fn delete(&mut self) {
+        if self.selection_range().is_some() {
+            self.delete_selection();
+            return;
+        }
         if self.cursor < self.buffer.len() {
             self.buffer.remove(self.cursor);
         }
     }
 
     pub fn move_left(&mut self) {
+        self.clear_selection();
+        self.move_left_inner();
+    }
+
+    pub fn move_right(&mut self) {
+        self.clear_selection();
+        self.move_right_inner();
+    }
+
+    pub fn move_left_select(&mut self) {
+        self.start_selection();
+        self.move_left_inner();
+    }
+
+    pub fn move_right_select(&mut self) {
+        self.start_selection();
+        self.move_right_inner();
+    }
+
+    pub fn home_select(&mut self) {
+        self.start_selection();
+        self.cursor = 0;
+    }
+
+    pub fn end_select(&mut self) {
+        self.start_selection();
+        self.cursor = self.buffer.len();
+    }
+
+    fn move_left_inner(&mut self) {
         if self.cursor > 0 {
             self.cursor = self.buffer[..self.cursor]
                 .char_indices()
@@ -66,7 +153,7 @@ impl CommandInput {
         }
     }
 
-    pub fn move_right(&mut self) {
+    fn move_right_inner(&mut self) {
         if self.cursor < self.buffer.len() {
             self.cursor += self.buffer[self.cursor..]
                 .chars()
@@ -77,20 +164,24 @@ impl CommandInput {
     }
 
     pub fn home(&mut self) {
+        self.clear_selection();
         self.cursor = 0;
     }
 
     pub fn end(&mut self) {
+        self.clear_selection();
         self.cursor = self.buffer.len();
     }
 
     pub fn clear(&mut self) {
         self.buffer.clear();
         self.cursor = 0;
+        self.selection = None;
     }
 
     pub fn take_buffer(&mut self) -> String {
         self.cursor = 0;
+        self.selection = None;
         std::mem::take(&mut self.buffer)
     }
 
@@ -109,6 +200,8 @@ impl CommandInput {
         3
     }
 }
+
+const SELECTION_BG: Color = Color::Indexed(24); // dark blue
 
 impl Widget for &CommandInput {
     fn render(self, area: Rect, buf: &mut Buffer) {
@@ -181,26 +274,77 @@ impl Widget for &CommandInput {
                 Color::Red
             };
 
-            let before_cursor = &self.buffer[..self.cursor];
-            let at_cursor = self.buffer[self.cursor..]
-                .chars()
-                .next()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| " ".to_string());
-            let after_cursor = if self.cursor < self.buffer.len() {
-                &self.buffer[self.cursor + at_cursor.len()..]
-            } else {
-                ""
+            let sel_style = Style::default().bg(SELECTION_BG).fg(text_color);
+            let normal_style = Style::default().fg(text_color);
+            let cursor_style = Style::default().bg(Color::White).fg(Color::Black);
+
+            let spans = match self.selection_range() {
+                Some((sel_start, sel_end)) => {
+                    // Build spans accounting for selection and cursor
+                    let cursor = self.cursor;
+                    let cursor_char = self.buffer[cursor..]
+                        .chars()
+                        .next()
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| " ".to_string());
+                    let cursor_end = if cursor < self.buffer.len() {
+                        cursor + cursor_char.len()
+                    } else {
+                        cursor
+                    };
+
+                    let mut spans = Vec::new();
+
+                    // Before selection
+                    if sel_start > 0 {
+                        spans.push(Span::styled(&self.buffer[..sel_start], normal_style));
+                    }
+
+                    if cursor >= sel_start && cursor < sel_end {
+                        // Cursor is inside the selection
+                        if cursor > sel_start {
+                            spans.push(Span::styled(&self.buffer[sel_start..cursor], sel_style));
+                        }
+                        spans.push(Span::styled(cursor_char, cursor_style));
+                        if cursor_end < sel_end {
+                            spans.push(Span::styled(&self.buffer[cursor_end..sel_end], sel_style));
+                        }
+                    } else {
+                        // Cursor is outside the selection (at sel_end)
+                        spans.push(Span::styled(&self.buffer[sel_start..sel_end], sel_style));
+                        spans.push(Span::styled(cursor_char, cursor_style));
+                    }
+
+                    // After selection and cursor
+                    let after_start = sel_end.max(cursor_end);
+                    if after_start < self.buffer.len() {
+                        spans.push(Span::styled(&self.buffer[after_start..], normal_style));
+                    }
+
+                    spans
+                }
+                None => {
+                    let before_cursor = &self.buffer[..self.cursor];
+                    let at_cursor = self.buffer[self.cursor..]
+                        .chars()
+                        .next()
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| " ".to_string());
+                    let after_cursor = if self.cursor < self.buffer.len() {
+                        &self.buffer[self.cursor + at_cursor.len()..]
+                    } else {
+                        ""
+                    };
+
+                    vec![
+                        Span::styled(before_cursor, normal_style),
+                        Span::styled(at_cursor, cursor_style),
+                        Span::styled(after_cursor, normal_style),
+                    ]
+                }
             };
 
-            let line = Line::from(vec![
-                Span::styled(before_cursor, Style::default().fg(text_color)),
-                Span::styled(
-                    at_cursor,
-                    Style::default().bg(Color::White).fg(Color::Black),
-                ),
-                Span::styled(after_cursor, Style::default().fg(text_color)),
-            ]);
+            let line = Line::from(spans);
             Paragraph::new(line).render(inner, buf);
         }
     }

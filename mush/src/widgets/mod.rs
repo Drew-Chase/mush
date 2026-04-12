@@ -433,6 +433,17 @@ impl App {
                         self.execute_command();
                     }
 
+                    // Select all
+                    (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
+                        self.input.select_all();
+                    }
+
+                    // Shift+Arrow selection
+                    (KeyModifiers::SHIFT, KeyCode::Left) => self.input.move_left_select(),
+                    (KeyModifiers::SHIFT, KeyCode::Right) => self.input.move_right_select(),
+                    (KeyModifiers::SHIFT, KeyCode::Home) => self.input.home_select(),
+                    (KeyModifiers::SHIFT, KeyCode::End) => self.input.end_select(),
+
                     // Text editing
                     (_, KeyCode::Backspace) => {
                         self.input.backspace();
@@ -442,10 +453,10 @@ impl App {
                         self.input.delete();
                         self.on_input_changed();
                     }
-                    (_, KeyCode::Left) => self.input.move_left(),
-                    (_, KeyCode::Right) => self.input.move_right(),
-                    (_, KeyCode::Home) => self.input.home(),
-                    (_, KeyCode::End) => self.input.end(),
+                    (KeyModifiers::NONE, KeyCode::Left) => self.input.move_left(),
+                    (KeyModifiers::NONE, KeyCode::Right) => self.input.move_right(),
+                    (KeyModifiers::NONE, KeyCode::Home) => self.input.home(),
+                    (KeyModifiers::NONE, KeyCode::End) => self.input.end(),
 
                     // Character input
                     (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) if c >= ' ' => {
