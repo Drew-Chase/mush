@@ -2,15 +2,14 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use wc::cli::WcConfig;
 use wc::ops::{WcCounts, count, format_counts};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = WcConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let mut config = WcConfig::parse();
+    config.apply_defaults();
 
     let files = if config.files.is_empty() {
         vec!["-".to_string()]

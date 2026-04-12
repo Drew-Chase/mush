@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use xxd::cli::XxdConfig;
 use xxd::ops::{xxd_hex_dump, xxd_reverse};
 
 fn parse(args: &[&str]) -> XxdConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    XxdConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["xxd"];
+    full.extend_from_slice(args);
+    XxdConfig::parse_from(full)
 }
 
 #[test]
@@ -37,18 +40,6 @@ fn parse_plain() {
 fn parse_reverse() {
     let config = parse(&["-r"]);
     assert!(config.reverse);
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(XxdConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(XxdConfig::from_args(&owned).is_none());
 }
 
 #[test]

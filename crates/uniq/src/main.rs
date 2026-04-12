@@ -2,15 +2,13 @@ use std::fs::File;
 use std::io::{self, BufReader, BufWriter};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use uniq::cli::UniqConfig;
 use uniq::ops;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = UniqConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = UniqConfig::parse();
 
     let stdin = io::stdin();
     let mut input: Box<dyn io::Read> = match &config.input {

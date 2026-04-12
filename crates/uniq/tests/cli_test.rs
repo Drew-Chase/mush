@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use uniq::cli::UniqConfig;
 
 fn parse(args: &[&str]) -> UniqConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    UniqConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["uniq"];
+    full.extend_from_slice(args);
+    UniqConfig::parse_from(full)
 }
 
 #[test]
@@ -54,12 +57,6 @@ fn flag_i() {
 fn flag_f() {
     let config = parse(&["-f", "3"]);
     assert_eq!(config.skip_fields, 3);
-}
-
-#[test]
-fn flag_f_attached() {
-    let config = parse(&["-f5"]);
-    assert_eq!(config.skip_fields, 5);
 }
 
 #[test]

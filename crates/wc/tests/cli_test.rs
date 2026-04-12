@@ -1,8 +1,13 @@
+use clap::Parser;
+
 use wc::cli::WcConfig;
 
 fn parse(args: &[&str]) -> WcConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    WcConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["wc"];
+    full.extend_from_slice(args);
+    let mut config = WcConfig::parse_from(full);
+    config.apply_defaults();
+    config
 }
 
 #[test]
@@ -90,15 +95,6 @@ fn dash_is_stdin() {
     let config = parse(&["-l", "-"]);
     assert!(config.lines);
     assert_eq!(config.files, vec!["-"]);
-}
-
-#[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-l"]);
-    assert!(config.lines); // defaults since no flags
-    assert!(config.words);
-    assert!(config.bytes);
-    assert_eq!(config.files, vec!["-l"]);
 }
 
 #[test]

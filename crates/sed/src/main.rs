@@ -2,18 +2,16 @@ use std::fs::{self, File};
 use std::io::{self, BufReader, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use sed::cli::SedConfig;
 use sed::ops::{parse_script, sed_process};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = SedConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = SedConfig::parse();
 
     // Collect all scripts
-    let mut all_scripts = config.scripts.clone();
+    let mut all_scripts = config.effective_scripts();
 
     // Read script files
     for script_file in &config.script_files {
@@ -41,10 +39,11 @@ fn main() -> ExitCode {
         }
     };
 
-    let files = if config.files.is_empty() {
+    let files_slice = config.effective_files();
+    let files = if files_slice.is_empty() {
         vec!["-".to_string()]
     } else {
-        config.files.clone()
+        files_slice.to_vec()
     };
 
     let mut exit_code = 0u8;

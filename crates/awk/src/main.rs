@@ -2,15 +2,13 @@ use std::fs;
 use std::io::{self, BufReader, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use awk::cli::AwkConfig;
 use awk::ops::run;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = AwkConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = AwkConfig::parse();
 
     // Get the program text
     let program = if let Some(ref prog_file) = config.program_file {
@@ -21,8 +19,11 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+    } else if let Some(prog) = config.program() {
+        prog.to_string()
     } else {
-        config.program.clone()
+        eprintln!("awk: no program text");
+        return ExitCode::from(2);
     };
 
     if program.is_empty() && config.program_file.is_none() {
@@ -30,10 +31,11 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    let files = if config.files.is_empty() {
+    let files_slice = config.files();
+    let files = if files_slice.is_empty() {
         vec!["-".to_string()]
     } else {
-        config.files.clone()
+        files_slice.to_vec()
     };
 
     let stdout = io::stdout();

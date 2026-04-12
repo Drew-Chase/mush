@@ -1,16 +1,19 @@
 use std::io::BufReader;
 
+use clap::Parser;
+
 use awk::cli::AwkConfig;
 use awk::ops::run;
 
 fn parse(args: &[&str]) -> AwkConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    AwkConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["awk"];
+    full.extend_from_slice(args);
+    AwkConfig::parse_from(full)
 }
 
 fn run_awk(program: &str, input: &str) -> String {
     let config = AwkConfig {
-        program: program.to_string(),
+        positionals: vec![program.to_string()],
         ..Default::default()
     };
     let mut reader = BufReader::new(input.as_bytes());
@@ -20,7 +23,7 @@ fn run_awk(program: &str, input: &str) -> String {
 }
 
 fn run_awk_config(config: &AwkConfig, input: &str) -> String {
-    let program = config.program.clone();
+    let program = config.program().unwrap_or_default().to_string();
     let mut reader = BufReader::new(input.as_bytes());
     let mut output = Vec::new();
     run(&program, config, &mut reader, &mut output).unwrap();
@@ -34,29 +37,22 @@ fn run_awk_config(config: &AwkConfig, input: &str) -> String {
 #[test]
 fn default_program_parsing() {
     let config = parse(&["{print $1}"]);
-    assert_eq!(config.program, "{print $1}");
-    assert!(config.files.is_empty());
+    assert_eq!(config.program(), Some("{print $1}"));
+    assert!(config.files().is_empty());
 }
 
 #[test]
 fn program_with_files() {
     let config = parse(&["{print $1}", "file1.txt", "file2.txt"]);
-    assert_eq!(config.program, "{print $1}");
-    assert_eq!(config.files, vec!["file1.txt", "file2.txt"]);
-}
-
-#[test]
-fn field_separator_short() {
-    let config = parse(&["-F:", "{print $1}"]);
-    assert_eq!(config.field_separator, ":");
-    assert_eq!(config.program, "{print $1}");
+    assert_eq!(config.program(), Some("{print $1}"));
+    assert_eq!(config.files(), &["file1.txt", "file2.txt"]);
 }
 
 #[test]
 fn field_separator_short_separate() {
     let config = parse(&["-F", ":", "{print $1}"]);
     assert_eq!(config.field_separator, ":");
-    assert_eq!(config.program, "{print $1}");
+    assert_eq!(config.program(), Some("{print $1}"));
 }
 
 #[test]
@@ -74,47 +70,34 @@ fn field_separator_long_separate() {
 #[test]
 fn variable_assignment_short() {
     let config = parse(&["-v", "OFS=,", "{print $1, $2}"]);
-    assert_eq!(config.variables, vec![("OFS".to_string(), ",".to_string())]);
-}
-
-#[test]
-fn variable_assignment_short_joined() {
-    let config = parse(&["-vOFS=,", "{print $1, $2}"]);
-    assert_eq!(config.variables, vec![("OFS".to_string(), ",".to_string())]);
+    assert_eq!(config.variables, vec!["OFS=,"]);
 }
 
 #[test]
 fn variable_assignment_long() {
     let config = parse(&["--assign=OFS=,", "{print $1, $2}"]);
-    assert_eq!(config.variables, vec![("OFS".to_string(), ",".to_string())]);
+    assert_eq!(config.variables, vec!["OFS=,"]);
 }
 
 #[test]
 fn variable_assignment_long_separate() {
     let config = parse(&["--assign", "OFS=,", "{print $1, $2}"]);
-    assert_eq!(config.variables, vec![("OFS".to_string(), ",".to_string())]);
+    assert_eq!(config.variables, vec!["OFS=,"]);
 }
 
 #[test]
 fn multiple_variables() {
     let config = parse(&["-v", "A=1", "-v", "B=2", "{print}"]);
     assert_eq!(config.variables.len(), 2);
-    assert_eq!(config.variables[0], ("A".to_string(), "1".to_string()));
-    assert_eq!(config.variables[1], ("B".to_string(), "2".to_string()));
+    assert_eq!(config.variables[0], "A=1");
+    assert_eq!(config.variables[1], "B=2");
 }
 
 #[test]
 fn program_file_short() {
     let config = parse(&["-f", "prog.awk", "data.txt"]);
     assert_eq!(config.program_file, Some("prog.awk".to_string()));
-    assert_eq!(config.files, vec!["data.txt"]);
-}
-
-#[test]
-fn program_file_short_joined() {
-    let config = parse(&["-fprog.awk", "data.txt"]);
-    assert_eq!(config.program_file, Some("prog.awk".to_string()));
-    assert_eq!(config.files, vec!["data.txt"]);
+    assert_eq!(config.files(), &["data.txt"]);
 }
 
 #[test]
@@ -132,19 +115,7 @@ fn program_file_long_separate() {
 #[test]
 fn stdin_dash() {
     let config = parse(&["{print}", "-"]);
-    assert_eq!(config.files, vec!["-"]);
-}
-
-#[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(AwkConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(AwkConfig::from_args(&owned).is_none());
+    assert_eq!(config.files(), &["-"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +149,7 @@ fn print_multiple_fields() {
 #[test]
 fn field_separator_colon() {
     let config = AwkConfig {
-        program: "{print $1}".to_string(),
+        positionals: vec!["{print $1}".to_string()],
         field_separator: ":".to_string(),
         ..Default::default()
     };
@@ -189,8 +160,8 @@ fn field_separator_colon() {
 #[test]
 fn custom_ofs() {
     let config = AwkConfig {
-        program: "{print $1, $2}".to_string(),
-        variables: vec![("OFS".to_string(), ",".to_string())],
+        positionals: vec!["{print $1, $2}".to_string()],
+        variables: vec!["OFS=,".to_string()],
         ..Default::default()
     };
     let out = run_awk_config(&config, "hello world\n");

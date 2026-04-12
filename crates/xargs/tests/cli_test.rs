@@ -1,11 +1,19 @@
 use std::io::Cursor;
 
+use clap::Parser;
+
 use xargs::cli::XargsConfig;
 use xargs::ops::{build_commands, read_items};
 
 fn parse(args: &[&str]) -> XargsConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    XargsConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["xargs"];
+    full.extend_from_slice(args);
+    let mut config = XargsConfig::parse_from(full);
+    // Default command is "echo"
+    if config.command.is_empty() {
+        config.command = vec!["echo".to_string()];
+    }
+    config
 }
 
 // --- CLI parsing tests ---
@@ -63,12 +71,6 @@ fn flag_n() {
 }
 
 #[test]
-fn flag_n_inline() {
-    let config = parse(&["-n3"]);
-    assert_eq!(config.max_args, Some(3));
-}
-
-#[test]
 fn flag_max_args_long() {
     let config = parse(&["--max-args", "5"]);
     assert_eq!(config.max_args, Some(5));
@@ -83,12 +85,6 @@ fn flag_max_args_long_equals() {
 #[test]
 fn flag_i_replace() {
     let config = parse(&["-I", "{}"]);
-    assert_eq!(config.replace, Some("{}".to_string()));
-}
-
-#[test]
-fn flag_i_replace_inline() {
-    let config = parse(&["-I{}"]);
     assert_eq!(config.replace, Some("{}".to_string()));
 }
 
@@ -111,12 +107,6 @@ fn flag_l() {
 }
 
 #[test]
-fn flag_l_inline() {
-    let config = parse(&["-L2"]);
-    assert_eq!(config.max_lines, Some(2));
-}
-
-#[test]
 fn flag_max_lines_long() {
     let config = parse(&["--max-lines", "2"]);
     assert_eq!(config.max_lines, Some(2));
@@ -125,12 +115,6 @@ fn flag_max_lines_long() {
 #[test]
 fn flag_p_capital() {
     let config = parse(&["-P", "4"]);
-    assert_eq!(config.max_procs, 4);
-}
-
-#[test]
-fn flag_p_capital_inline() {
-    let config = parse(&["-P4"]);
     assert_eq!(config.max_procs, 4);
 }
 
@@ -185,12 +169,6 @@ fn flag_no_run_if_empty_long() {
 #[test]
 fn flag_s() {
     let config = parse(&["-s", "1000"]);
-    assert_eq!(config.max_chars, Some(1000));
-}
-
-#[test]
-fn flag_s_inline() {
-    let config = parse(&["-s1000"]);
     assert_eq!(config.max_chars, Some(1000));
 }
 

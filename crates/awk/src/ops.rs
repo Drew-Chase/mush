@@ -1029,8 +1029,10 @@ impl Env {
         };
 
         let mut vars = HashMap::new();
-        for (k, v) in &config.variables {
-            vars.insert(k.clone(), v.clone());
+        for assignment in &config.variables {
+            if let Some((k, v)) = assignment.split_once('=') {
+                vars.insert(k.to_string(), v.to_string());
+            }
         }
 
         // If FS was set via -v, use that; otherwise use -F value

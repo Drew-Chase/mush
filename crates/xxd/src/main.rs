@@ -2,15 +2,13 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use xxd::cli::XxdConfig;
 use xxd::ops::{xxd_hex_dump, xxd_reverse};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = XxdConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = XxdConfig::parse();
 
     let stdout = io::stdout();
     let mut out = stdout.lock();

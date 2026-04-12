@@ -1,38 +1,60 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
 
-const HELP_TEXT: &str = "\
-Usage: xxd [OPTIONS] [FILE]
-Make a hex dump of a file or stdin.
-
-  -c COLS        number of octets per line (default 16)
-  -g BYTES       group size in bytes (default 2)
-  -l LEN         stop after LEN octets
-  -s SEEK        start at SEEK bytes offset
-  -u             use upper case hex letters
-  -p             output in plain hex dump style
-  -r             reverse: convert hex dump to binary
-  -i             output in C include file style
-  -b             binary digit dump
-  -V, --version  output version information and exit
-  -h, --help     display this help and exit";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[command(
+    name = "xxd",
+    about = "Make a hex dump of a file or stdin.",
+    version,
+    disable_help_flag = true
+)]
 pub struct XxdConfig {
+    #[arg(long = "help", short = 'h', action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    /// Number of octets per line
+    #[arg(short = 'c', default_value_t = 16)]
     pub cols: usize,
+
+    /// Group size in bytes
+    #[arg(short = 'g', default_value_t = 2)]
     pub group_size: usize,
+
+    /// Stop after LEN octets
+    #[arg(short = 'l')]
     pub length: Option<usize>,
+
+    /// Start at SEEK bytes offset
+    #[arg(short = 's', default_value_t = 0)]
     pub seek: usize,
+
+    /// Use upper case hex letters
+    #[arg(short = 'u')]
     pub upper: bool,
+
+    /// Output in plain hex dump style
+    #[arg(short = 'p')]
     pub plain: bool,
+
+    /// Reverse: convert hex dump to binary
+    #[arg(short = 'r')]
     pub reverse: bool,
+
+    /// Output in C include file style
+    #[arg(short = 'i')]
     pub include: bool,
+
+    /// Binary digit dump
+    #[arg(short = 'b')]
     pub bits: bool,
+
+    /// File to read
     pub file: Option<String>,
 }
 
 impl Default for XxdConfig {
     fn default() -> Self {
         Self {
+            help: None,
             cols: 16,
             group_size: 2,
             length: None,
@@ -44,56 +66,5 @@ impl Default for XxdConfig {
             bits: false,
             file: None,
         }
-    }
-}
-
-impl XxdConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = XxdConfig::default();
-        let mut i = 0;
-
-        while i < args.len() {
-            let arg = &args[i];
-
-            if arg == "--help" || arg == "-h" {
-                println!("{HELP_TEXT}");
-                return None;
-            }
-            if arg == "--version" || arg == "-V" {
-                println!("xxd {VERSION}");
-                return None;
-            }
-
-            if arg == "-c" {
-                i += 1;
-                config.cols = args.get(i)?.parse().ok()?;
-            } else if arg == "-g" {
-                i += 1;
-                config.group_size = args.get(i)?.parse().ok()?;
-            } else if arg == "-l" {
-                i += 1;
-                config.length = Some(args.get(i)?.parse().ok()?);
-            } else if arg == "-s" {
-                i += 1;
-                config.seek = args.get(i)?.parse().ok()?;
-            } else if arg == "-u" {
-                config.upper = true;
-            } else if arg == "-p" {
-                config.plain = true;
-            } else if arg == "-r" {
-                config.reverse = true;
-            } else if arg == "-i" {
-                config.include = true;
-            } else if arg == "-b" {
-                config.bits = true;
-            } else if arg.starts_with('-') {
-                eprintln!("xxd: invalid option '{arg}'");
-            } else {
-                config.file = Some(arg.clone());
-            }
-            i += 1;
-        }
-
-        Some(config)
     }
 }

@@ -1,89 +1,47 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
 
-const HELP_TEXT: &str = "\
-Usage: wc [OPTION]... [FILE]...
-
-Print newline, word, and byte counts for each FILE, and a total line if
-more than one FILE is specified. A word is a non-zero-length sequence of
-printable characters delimited by white space.
-
-With no FILE, or when FILE is -, read standard input.
-
-  -c, --bytes            print the byte counts
-  -m, --chars            print the character counts
-  -l, --lines            print the newline counts
-  -L, --max-line-length  print the maximum display width
-  -w, --words            print the word counts
-      --help     display this help and exit
-      --version  output version information and exit";
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Parser, Debug, Clone, Default, PartialEq, Eq)]
+#[command(
+    name = "wc",
+    about = "Print newline, word, and byte counts for each FILE, and a total line if\nmore than one FILE is specified. A word is a non-zero-length sequence of\nprintable characters delimited by white space.\n\nWith no FILE, or when FILE is -, read standard input.",
+    version,
+    disable_help_flag = true
+)]
 pub struct WcConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    /// Print the newline counts
+    #[arg(short = 'l', long = "lines")]
     pub lines: bool,
+
+    /// Print the word counts
+    #[arg(short = 'w', long = "words")]
     pub words: bool,
+
+    /// Print the byte counts
+    #[arg(short = 'c', long = "bytes")]
     pub bytes: bool,
+
+    /// Print the character counts
+    #[arg(short = 'm', long = "chars")]
     pub chars: bool,
+
+    /// Print the maximum display width
+    #[arg(short = 'L', long = "max-line-length")]
     pub max_line_length: bool,
+
+    /// Files to read
     pub files: Vec<String>,
 }
 
 impl WcConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = WcConfig::default();
-        let mut any_flag = false;
-        let mut i = 0;
-
-        while i < args.len() {
-            let arg = &args[i];
-
-            if arg == "--help" {
-                println!("{HELP_TEXT}");
-                return None;
-            }
-            if arg == "--version" {
-                println!("wc {VERSION}");
-                return None;
-            }
-            if arg == "--" {
-                i += 1;
-                break;
-            }
-
-            match arg.as_str() {
-                "--lines" => { config.lines = true; any_flag = true; }
-                "--words" => { config.words = true; any_flag = true; }
-                "--bytes" => { config.bytes = true; any_flag = true; }
-                "--chars" => { config.chars = true; any_flag = true; }
-                "--max-line-length" => { config.max_line_length = true; any_flag = true; }
-                _ if arg.starts_with('-') && arg != "-" => {
-                    for c in arg[1..].chars() {
-                        match c {
-                            'l' => { config.lines = true; any_flag = true; }
-                            'w' => { config.words = true; any_flag = true; }
-                            'c' => { config.bytes = true; any_flag = true; }
-                            'm' => { config.chars = true; any_flag = true; }
-                            'L' => { config.max_line_length = true; any_flag = true; }
-                            _ => {
-                                eprintln!("wc: invalid option -- '{c}'");
-                                return None;
-                            }
-                        }
-                    }
-                }
-                _ => break,
-            }
-
-            i += 1;
+    /// Apply default flag behavior: if no flags are set, enable lines+words+bytes
+    pub fn apply_defaults(&mut self) {
+        if !self.lines && !self.words && !self.bytes && !self.chars && !self.max_line_length {
+            self.lines = true;
+            self.words = true;
+            self.bytes = true;
         }
-
-        config.files = args[i..].to_vec();
-
-        if !any_flag {
-            config.lines = true;
-            config.words = true;
-            config.bytes = true;
-        }
-
-        Some(config)
     }
 }

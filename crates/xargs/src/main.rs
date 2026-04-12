@@ -1,15 +1,18 @@
 use std::io;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use xargs::cli::XargsConfig;
 use xargs::ops::{build_commands, execute_commands, read_items};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut config = XargsConfig::parse();
 
-    let Some(config) = XargsConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    // Default command is "echo"
+    if config.command.is_empty() {
+        config.command = vec!["echo".to_string()];
+    }
 
     let stdin = io::stdin();
     let mut input = stdin.lock();
