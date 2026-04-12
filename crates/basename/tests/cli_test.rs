@@ -1,9 +1,14 @@
+use clap::Parser;
+
 use basename::cli::BasenameConfig;
 use basename::ops::basename;
 
 fn parse(args: &[&str]) -> BasenameConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    BasenameConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["basename"];
+    full.extend_from_slice(args);
+    let mut config = BasenameConfig::parse_from(full);
+    config.fixup();
+    config
 }
 
 #[test]
@@ -104,13 +109,13 @@ fn parse_combined_az() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(BasenameConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    let result = BasenameConfig::try_parse_from(["basename", "--help"]);
+    assert!(result.is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(BasenameConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    let result = BasenameConfig::try_parse_from(["basename", "--version"]);
+    assert!(result.is_err());
 }

@@ -1,19 +1,20 @@
+use clap::Parser;
+
 use whoami::cli::WhoamiConfig;
 
 #[test]
 fn no_args() {
-    let config = WhoamiConfig::from_args(&[]);
-    assert!(config.is_some());
+    let _config = WhoamiConfig::parse_from(["whoami"]);
 }
 
 #[test]
-fn help_returns_none() {
-    let args = vec!["--help".to_string()];
-    assert!(WhoamiConfig::from_args(&args).is_none());
+fn help_returns_err() {
+    let result = WhoamiConfig::try_parse_from(["whoami", "--help"]);
+    assert!(result.is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let args = vec!["--version".to_string()];
-    assert!(WhoamiConfig::from_args(&args).is_none());
+fn version_returns_err() {
+    let result = WhoamiConfig::try_parse_from(["whoami", "--version"]);
+    assert!(result.is_err());
 }

@@ -1,15 +1,13 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use realpath::cli::RealpathConfig;
 use realpath::ops::resolve_path;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = RealpathConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = RealpathConfig::parse();
 
     if config.files.is_empty() {
         eprintln!("realpath: missing operand");

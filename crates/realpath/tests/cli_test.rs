@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use realpath::cli::RealpathConfig;
 use realpath::ops::resolve_path;
 
 fn parse(args: &[&str]) -> RealpathConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    RealpathConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["realpath"];
+    full.extend_from_slice(args);
+    RealpathConfig::parse_from(full)
 }
 
 #[test]
@@ -17,14 +20,14 @@ fn resolve_existing_path() {
 
 #[test]
 fn canonicalize_existing_missing_file() {
-    let config = RealpathConfig { canonicalize_existing: true, ..Default::default() };
+    let config = RealpathConfig::parse_from(["realpath", "-e", "/nonexistent_path_xyz_123"]);
     let result = resolve_path("/nonexistent_path_xyz_123", &config);
     assert!(result.is_err());
 }
 
 #[test]
 fn canonicalize_missing_accepts_anything() {
-    let config = RealpathConfig { canonicalize_missing: true, ..Default::default() };
+    let config = RealpathConfig::parse_from(["realpath", "-m", "/nonexistent_path_xyz_123/foo/bar"]);
     let result = resolve_path("/nonexistent_path_xyz_123/foo/bar", &config);
     assert!(result.is_ok());
     let resolved = result.unwrap();
@@ -68,13 +71,13 @@ fn parse_long_flags() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(RealpathConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    let result = RealpathConfig::try_parse_from(["realpath", "--help"]);
+    assert!(result.is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(RealpathConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    let result = RealpathConfig::try_parse_from(["realpath", "--version"]);
+    assert!(result.is_err());
 }

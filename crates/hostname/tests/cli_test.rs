@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use hostname::cli::HostnameConfig;
 
 fn parse(args: &[&str]) -> HostnameConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    HostnameConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["hostname"];
+    full.extend_from_slice(args);
+    HostnameConfig::parse_from(full)
 }
 
 #[test]
@@ -45,13 +48,13 @@ fn long_long() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(HostnameConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    let result = HostnameConfig::try_parse_from(["hostname", "--help"]);
+    assert!(result.is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(HostnameConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    let result = HostnameConfig::try_parse_from(["hostname", "--version"]);
+    assert!(result.is_err());
 }

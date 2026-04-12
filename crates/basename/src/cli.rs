@@ -1,115 +1,38 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
 
-const HELP_TEXT: &str = "\
-Usage: basename NAME [SUFFIX]
-  or:  basename OPTION... NAME...
-Print NAME with any leading directory components removed.
-If specified, also remove a trailing SUFFIX.
-
-  -a, --multiple       support multiple arguments and treat each as a NAME
-  -s, --suffix=SUFFIX  remove a trailing SUFFIX; implies -a
-  -z, --zero           end each output line with NUL, not newline
-      --help           display this help and exit
-      --version        output version information and exit";
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Parser, Debug, Clone)]
+#[command(
+    name = "basename",
+    about = "Print NAME with any leading directory components removed.",
+    version,
+    disable_help_flag = true
+)]
 pub struct BasenameConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    #[arg(short = 'a', long = "multiple", help = "Support multiple arguments and treat each as a NAME")]
     pub multiple: bool,
+
+    #[arg(short = 's', long = "suffix", help = "Remove a trailing SUFFIX; implies -a")]
     pub suffix: Option<String>,
+
+    #[arg(short = 'z', long = "zero", help = "End each output line with NUL, not newline")]
     pub zero: bool,
+
     pub names: Vec<String>,
 }
 
 impl BasenameConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = BasenameConfig::default();
-        let mut i = 0;
-        let mut parsing_flags = true;
-
-        while i < args.len() {
-            let arg = &args[i];
-
-            if !parsing_flags || !arg.starts_with('-') || arg == "-" {
-                config.names.push(arg.clone());
-                i += 1;
-                continue;
-            }
-
-            if arg == "--" {
-                parsing_flags = false;
-                i += 1;
-                continue;
-            }
-
-            if arg == "--help" {
-                println!("{HELP_TEXT}");
-                return None;
-            }
-            if arg == "--version" {
-                println!("basename {VERSION}");
-                return None;
-            }
-            if arg == "--multiple" {
-                config.multiple = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--zero" {
-                config.zero = true;
-                i += 1;
-                continue;
-            }
-            if let Some(suffix_str) = arg.strip_prefix("--suffix=") {
-                config.suffix = Some(suffix_str.to_string());
-                config.multiple = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--suffix" {
-                i += 1;
-                if i < args.len() {
-                    config.suffix = Some(args[i].clone());
-                    config.multiple = true;
-                }
-                i += 1;
-                continue;
-            }
-
-            // Short flags
-            let chars: Vec<char> = arg[1..].chars().collect();
-            let mut j = 0;
-            while j < chars.len() {
-                match chars[j] {
-                    'a' => config.multiple = true,
-                    'z' => config.zero = true,
-                    's' => {
-                        let rest: String = chars[j + 1..].iter().collect();
-                        if !rest.is_empty() {
-                            config.suffix = Some(rest);
-                        } else {
-                            i += 1;
-                            if i < args.len() {
-                                config.suffix = Some(args[i].clone());
-                            }
-                        }
-                        config.multiple = true;
-                        j = chars.len();
-                        continue;
-                    }
-                    _ => {
-                        eprintln!("basename: invalid option -- '{}'", chars[j]);
-                    }
-                }
-                j += 1;
-            }
-            i += 1;
+    /// Post-parse fixups to match traditional basename behavior:
+    /// - When --suffix is given, imply --multiple
+    /// - When not in multiple mode and two positional args given, second is suffix
+    pub fn fixup(&mut self) {
+        if self.suffix.is_some() {
+            self.multiple = true;
         }
-
-        // When not in multiple mode, second positional is treated as suffix
-        if !config.multiple && config.names.len() == 2 {
-            config.suffix = Some(config.names.remove(1));
+        if !self.multiple && self.names.len() == 2 {
+            self.suffix = Some(self.names.remove(1));
         }
-
-        Some(config)
     }
 }

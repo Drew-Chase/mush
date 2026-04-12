@@ -1,15 +1,13 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use dirname::cli::DirnameConfig;
 use dirname::ops::dirname;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = DirnameConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = DirnameConfig::parse();
 
     if config.names.is_empty() {
         eprintln!("dirname: missing operand");

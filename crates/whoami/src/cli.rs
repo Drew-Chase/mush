@@ -1,20 +1,8 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const HELP_TEXT: &str = "\
-Usage: whoami
+use clap::Parser;
 
-Print the current user name.
-
-      --help     display this help and exit
-      --version  output version information and exit";
-
-pub struct WhoamiConfig;
-
-impl WhoamiConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        for arg in args {
-            if arg == "--help" { println!("{HELP_TEXT}"); return None; }
-            if arg == "--version" { println!("whoami {VERSION}"); return None; }
-        }
-        Some(WhoamiConfig)
-    }
+#[derive(Parser, Debug, Clone)]
+#[command(name = "whoami", about = "Print the current user name.", version, disable_help_flag = true)]
+pub struct WhoamiConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
 }

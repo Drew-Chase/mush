@@ -1,15 +1,14 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use basename::cli::BasenameConfig;
 use basename::ops::basename;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = BasenameConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let mut config = BasenameConfig::parse();
+    config.fixup();
 
     if config.names.is_empty() {
         eprintln!("basename: missing operand");

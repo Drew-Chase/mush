@@ -1,35 +1,38 @@
+use clap::Parser;
+
 use readlink::cli::ReadlinkConfig;
 use readlink::ops::readlink;
 
 fn parse(args: &[&str]) -> ReadlinkConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    ReadlinkConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["readlink"];
+    full.extend_from_slice(args);
+    ReadlinkConfig::parse_from(full)
 }
 
 #[test]
 fn readlink_nonexistent() {
-    let config = ReadlinkConfig::default();
+    let config = ReadlinkConfig::parse_from(["readlink", "/nonexistent_path_xyz_123"]);
     let result = readlink("/nonexistent_path_xyz_123", &config);
     assert!(result.is_err());
 }
 
 #[test]
 fn canonicalize_existing_dir() {
-    let config = ReadlinkConfig { canonicalize_existing: true, ..Default::default() };
+    let config = ReadlinkConfig::parse_from(["readlink", "-e", "."]);
     let result = readlink(".", &config);
     assert!(result.is_ok());
 }
 
 #[test]
 fn canonicalize_missing_nonexistent() {
-    let config = ReadlinkConfig { canonicalize_missing: true, ..Default::default() };
+    let config = ReadlinkConfig::parse_from(["readlink", "-m", "/nonexistent_xyz_123/foo/bar"]);
     let result = readlink("/nonexistent_xyz_123/foo/bar", &config);
     assert!(result.is_ok());
 }
 
 #[test]
 fn canonicalize_f_current_dir() {
-    let config = ReadlinkConfig { canonicalize: true, ..Default::default() };
+    let config = ReadlinkConfig::parse_from(["readlink", "-f", "."]);
     let result = readlink(".", &config);
     assert!(result.is_ok());
 }
@@ -81,13 +84,13 @@ fn parse_long_flags() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(ReadlinkConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    let result = ReadlinkConfig::try_parse_from(["readlink", "--help"]);
+    assert!(result.is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(ReadlinkConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    let result = ReadlinkConfig::try_parse_from(["readlink", "--version"]);
+    assert!(result.is_err());
 }

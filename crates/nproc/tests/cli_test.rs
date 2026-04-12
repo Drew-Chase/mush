@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use nproc::cli::NprocConfig;
 use nproc::ops::nproc;
 
 fn parse(args: &[&str]) -> NprocConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    NprocConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["nproc"];
+    full.extend_from_slice(args);
+    NprocConfig::parse_from(full)
 }
 
 #[test]
@@ -33,18 +36,18 @@ fn ignore_separate() {
 
 #[test]
 fn ignore_never_below_one() {
-    let config = NprocConfig { all: false, ignore: 99999 };
+    let config = NprocConfig::parse_from(["nproc", "--ignore", "99999"]);
     assert_eq!(nproc(&config), 1);
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(NprocConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    let result = NprocConfig::try_parse_from(["nproc", "--help"]);
+    assert!(result.is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(NprocConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    let result = NprocConfig::try_parse_from(["nproc", "--version"]);
+    assert!(result.is_err());
 }

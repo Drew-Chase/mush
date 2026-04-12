@@ -1,15 +1,13 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use readlink::cli::ReadlinkConfig;
 use readlink::ops::readlink;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = ReadlinkConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = ReadlinkConfig::parse();
 
     if config.files.is_empty() {
         eprintln!("readlink: missing operand");

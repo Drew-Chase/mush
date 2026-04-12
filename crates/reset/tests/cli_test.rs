@@ -1,22 +1,23 @@
+use clap::Parser;
+
 use reset::cli::ResetConfig;
 use reset::ops::{RESET_SEQUENCE, reset_terminal};
 
 #[test]
 fn default_config() {
-    let config = ResetConfig::from_args(&[]);
-    assert!(config.is_some());
+    let _config = ResetConfig::parse_from(["reset"]);
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(ResetConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    let result = ResetConfig::try_parse_from(["reset", "--help"]);
+    assert!(result.is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(ResetConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    let result = ResetConfig::try_parse_from(["reset", "--version"]);
+    assert!(result.is_err());
 }
 
 #[test]

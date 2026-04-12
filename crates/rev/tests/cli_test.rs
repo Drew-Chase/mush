@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use rev::cli::RevConfig;
 use rev::ops::{rev_line, rev_stream};
 
 fn parse(args: &[&str]) -> RevConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    RevConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["rev"];
+    full.extend_from_slice(args);
+    RevConfig::parse_from(full)
 }
 
 #[test]
@@ -63,13 +66,13 @@ fn parse_stdin_dash() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(RevConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    let result = RevConfig::try_parse_from(["rev", "--help"]);
+    assert!(result.is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(RevConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    let result = RevConfig::try_parse_from(["rev", "--version"]);
+    assert!(result.is_err());
 }

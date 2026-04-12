@@ -1,15 +1,13 @@
 use std::io;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use reset::cli::ResetConfig;
 use reset::ops::reset_terminal;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(_config) = ResetConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let _config = ResetConfig::parse();
 
     let stdout = io::stdout();
     let mut out = stdout.lock();

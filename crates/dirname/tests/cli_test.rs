@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use dirname::cli::DirnameConfig;
 use dirname::ops::dirname;
 
 fn parse(args: &[&str]) -> DirnameConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    DirnameConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["dirname"];
+    full.extend_from_slice(args);
+    DirnameConfig::parse_from(full)
 }
 
 #[test]
@@ -68,13 +71,13 @@ fn parse_multiple_names() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(DirnameConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    let result = DirnameConfig::try_parse_from(["dirname", "--help"]);
+    assert!(result.is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(DirnameConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    let result = DirnameConfig::try_parse_from(["dirname", "--version"]);
+    assert!(result.is_err());
 }

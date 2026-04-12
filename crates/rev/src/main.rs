@@ -2,15 +2,13 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use rev::cli::RevConfig;
 use rev::ops::rev_stream;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = RevConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = RevConfig::parse();
 
     let files = if config.files.is_empty() {
         vec!["-".to_string()]
