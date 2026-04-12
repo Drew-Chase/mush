@@ -1356,6 +1356,23 @@ impl App {
 
         let base_cmd = &parts[0];
 
+        // Block executables that open GUI windows or hang instead of printing help
+        const HELP_BLOCKLIST: &[&str] = &[
+            "explorer", "notepad", "mspaint", "calc", "winver", "regedit",
+            "taskmgr", "control", "mmc", "devenv", "wordpad", "write",
+            "firefox", "chrome", "msedge", "brave", "opera", "iexplore",
+        ];
+        {
+            let stem = base_cmd
+                .to_lowercase()
+                .strip_suffix(".exe")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| base_cmd.to_lowercase());
+            if HELP_BLOCKLIST.iter().any(|&b| b == stem) {
+                return;
+            }
+        }
+
         // Determine how to get help for this command
         enum HelpTarget {
             External {
@@ -1473,32 +1490,34 @@ impl App {
             };
 
             let try_help = |flags: &[&str]| -> Option<String> {
-                let mut child = match &target {
+                let mut cmd = match &target {
                     HelpTarget::External { path, sub_args } => {
-                        std::process::Command::new(path)
-                            .args(sub_args)
-                            .args(flags)
-                            .stdout(Stdio::piped())
-                            .stderr(Stdio::piped())
-                            .spawn()
-                            .ok()?
+                        let mut c = std::process::Command::new(path);
+                        c.args(sub_args).args(flags);
+                        c
                     }
                     HelpTarget::Script {
                         bun_path,
                         entry_point,
                         script_dir,
                         sub_args,
-                    } => std::process::Command::new(bun_path)
-                        .arg("run")
-                        .arg(entry_point)
-                        .args(sub_args)
-                        .args(flags)
-                        .current_dir(script_dir)
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped())
-                        .spawn()
-                        .ok()?,
+                    } => {
+                        let mut c = std::process::Command::new(bun_path);
+                        c.arg("run")
+                            .arg(entry_point)
+                            .args(sub_args)
+                            .args(flags)
+                            .current_dir(script_dir);
+                        c
+                    }
                 };
+                cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+                let mut child = cmd.spawn().ok()?;
 
                 if !wait_for_child(&mut child) {
                     return None;
