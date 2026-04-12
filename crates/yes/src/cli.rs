@@ -1,44 +1,20 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const HELP_TEXT: &str = "\
-Usage: yes [STRING]...
+use clap::Parser;
 
-Repeatedly output a line with all specified STRING(s), or 'y'.
-
-      --help     display this help and exit
-      --version  output version information and exit";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[command(name = "yes", about = "Repeatedly output a line with all specified STRING(s), or 'y'", version, disable_help_flag = true)]
 pub struct YesConfig {
-    pub string: String,
-}
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
 
-impl Default for YesConfig {
-    fn default() -> Self {
-        Self {
-            string: "y".to_string(),
-        }
-    }
+    pub args: Vec<String>,
 }
 
 impl YesConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        if args.len() == 1 {
-            if args[0] == "--help" {
-                println!("{HELP_TEXT}");
-                return None;
-            }
-            if args[0] == "--version" {
-                println!("yes {VERSION}");
-                return None;
-            }
-        }
-
-        if args.is_empty() {
-            Some(YesConfig::default())
+    pub fn string(&self) -> String {
+        if self.args.is_empty() {
+            "y".to_string()
         } else {
-            Some(YesConfig {
-                string: args.join(" "),
-            })
+            self.args.join(" ")
         }
     }
 }

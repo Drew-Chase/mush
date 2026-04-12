@@ -1,8 +1,13 @@
+use clap::Parser;
+
 use cat::cli::CatConfig;
 
 fn parse(args: &[&str]) -> CatConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    CatConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["cat"];
+    full.extend_from_slice(args);
+    let mut config = CatConfig::parse_from(full);
+    config.resolve();
+    config
 }
 
 #[test]
@@ -172,15 +177,13 @@ fn double_dash_stops_flags() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(CatConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    assert!(CatConfig::try_parse_from(["cat", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(CatConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(CatConfig::try_parse_from(["cat", "--version"]).is_err());
 }
 
 #[test]

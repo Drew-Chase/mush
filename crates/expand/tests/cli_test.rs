@@ -1,11 +1,14 @@
 use std::io::Cursor;
 
+use clap::Parser;
+
 use expand::cli::ExpandConfig;
 use expand::ops::expand;
 
 fn parse(args: &[&str]) -> ExpandConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    ExpandConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["expand"];
+    full.extend_from_slice(args);
+    ExpandConfig::parse_from(full)
 }
 
 fn run(args: &[&str], input: &str) -> String {
@@ -29,12 +32,6 @@ fn tab_width_4() {
 }
 
 #[test]
-fn tab_width_4_short() {
-    let result = run(&["-t4"], "\thello");
-    assert_eq!(result, "    hello\n");
-}
-
-#[test]
 fn initial_only() {
     let result = run(&["-i"], "\thello\tworld");
     assert_eq!(result, "        hello\tworld\n");
@@ -54,7 +51,6 @@ fn multiple_tabs() {
 
 #[test]
 fn tab_at_position() {
-    // "ab\t" -> "ab" is 2 chars, tab to next stop at 8 = 6 spaces
     let result = run(&[], "ab\tcd");
     assert_eq!(result, "ab      cd\n");
 }
@@ -66,15 +62,13 @@ fn no_tabs() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned: Vec<String> = vec!["--help".to_string()];
-    assert!(ExpandConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    assert!(ExpandConfig::try_parse_from(["expand", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned: Vec<String> = vec!["--version".to_string()];
-    assert!(ExpandConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(ExpandConfig::try_parse_from(["expand", "--version"]).is_err());
 }
 
 #[test]

@@ -1,119 +1,57 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
 
-const HELP_TEXT: &str = "\
-Usage: uname [OPTION]...
-Print certain system information. With no OPTION, same as -s.
-
-  -a, --all                print all information
-  -s, --kernel-name        print the kernel name
-  -n, --nodename           print the network node hostname
-  -r, --kernel-release     print the kernel release
-  -v, --kernel-version     print the kernel version
-  -m, --machine            print the machine hardware name
-  -p, --processor          print the processor type
-  -o, --operating-system   print the operating system
-      --help               display this help and exit
-      --version            output version information and exit";
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Parser, Debug, Clone, Default, PartialEq, Eq)]
+#[command(name = "uname", about = "Print certain system information", version, disable_help_flag = true)]
 pub struct UnameConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    #[arg(short = 'a', long = "all", help = "Print all information")]
     pub all: bool,
+
+    #[arg(short = 's', long = "kernel-name", help = "Print the kernel name")]
     pub kernel_name: bool,
+
+    #[arg(short = 'n', long = "nodename", help = "Print the network node hostname")]
     pub nodename: bool,
+
+    #[arg(short = 'r', long = "kernel-release", help = "Print the kernel release")]
     pub kernel_release: bool,
+
+    #[arg(short = 'v', long = "kernel-version", help = "Print the kernel version")]
     pub kernel_version: bool,
+
+    #[arg(short = 'm', long = "machine", help = "Print the machine hardware name")]
     pub machine: bool,
+
+    #[arg(short = 'p', long = "processor", help = "Print the processor type")]
     pub processor: bool,
+
+    #[arg(short = 'o', long = "operating-system", help = "Print the operating system")]
     pub operating_system: bool,
 }
 
 impl UnameConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = UnameConfig::default();
-        let mut any_flag = false;
-
-        for arg in args {
-            match arg.as_str() {
-                "--help" => {
-                    println!("{HELP_TEXT}");
-                    return None;
-                }
-                "--version" => {
-                    println!("uname {VERSION}");
-                    return None;
-                }
-                "--all" => {
-                    config.all = true;
-                    any_flag = true;
-                }
-                "--kernel-name" => {
-                    config.kernel_name = true;
-                    any_flag = true;
-                }
-                "--nodename" => {
-                    config.nodename = true;
-                    any_flag = true;
-                }
-                "--kernel-release" => {
-                    config.kernel_release = true;
-                    any_flag = true;
-                }
-                "--kernel-version" => {
-                    config.kernel_version = true;
-                    any_flag = true;
-                }
-                "--machine" => {
-                    config.machine = true;
-                    any_flag = true;
-                }
-                "--processor" => {
-                    config.processor = true;
-                    any_flag = true;
-                }
-                "--operating-system" => {
-                    config.operating_system = true;
-                    any_flag = true;
-                }
-                s if s.starts_with('-') && !s.starts_with("--") => {
-                    for c in s[1..].chars() {
-                        match c {
-                            'a' => config.all = true,
-                            's' => config.kernel_name = true,
-                            'n' => config.nodename = true,
-                            'r' => config.kernel_release = true,
-                            'v' => config.kernel_version = true,
-                            'm' => config.machine = true,
-                            'p' => config.processor = true,
-                            'o' => config.operating_system = true,
-                            _ => {
-                                eprintln!("uname: invalid option -- '{c}'");
-                                return None;
-                            }
-                        }
-                    }
-                    any_flag = true;
-                }
-                _ => {
-                    eprintln!("uname: extra operand '{arg}'");
-                    return None;
-                }
-            }
+    pub fn resolve(&mut self) {
+        if self.all {
+            self.kernel_name = true;
+            self.nodename = true;
+            self.kernel_release = true;
+            self.kernel_version = true;
+            self.machine = true;
+            self.processor = true;
+            self.operating_system = true;
         }
 
-        if !any_flag {
-            config.kernel_name = true;
+        if !self.kernel_name
+            && !self.nodename
+            && !self.kernel_release
+            && !self.kernel_version
+            && !self.machine
+            && !self.processor
+            && !self.operating_system
+        {
+            self.kernel_name = true;
         }
-
-        if config.all {
-            config.kernel_name = true;
-            config.nodename = true;
-            config.kernel_release = true;
-            config.kernel_version = true;
-            config.machine = true;
-            config.processor = true;
-            config.operating_system = true;
-        }
-
-        Some(config)
     }
 }

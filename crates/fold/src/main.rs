@@ -2,15 +2,13 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use fold::cli::FoldConfig;
 use fold::ops;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = FoldConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = FoldConfig::parse();
 
     let stdout = io::stdout();
     let mut out = stdout.lock();

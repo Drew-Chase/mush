@@ -2,15 +2,14 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use cat::cli::CatConfig;
 use cat::ops::cat;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = CatConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let mut config = CatConfig::parse();
+    config.resolve();
 
     let stdout = io::stdout();
     let mut out = stdout.lock();

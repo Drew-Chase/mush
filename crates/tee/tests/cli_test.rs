@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use tee::cli::TeeConfig;
 
 fn parse(args: &[&str]) -> TeeConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    TeeConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["tee"];
+    full.extend_from_slice(args);
+    TeeConfig::parse_from(full)
 }
 
 #[test]
@@ -45,15 +48,13 @@ fn double_dash_stops_flags() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(TeeConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    assert!(TeeConfig::try_parse_from(["tee", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(TeeConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(TeeConfig::try_parse_from(["tee", "--version"]).is_err());
 }
 
 #[test]

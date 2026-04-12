@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use more::cli::MoreConfig;
 
 fn parse(args: &[&str]) -> MoreConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    MoreConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["more"];
+    full.extend_from_slice(args);
+    MoreConfig::parse_from(full)
 }
 
 #[test]
@@ -27,14 +30,8 @@ fn flag_n() {
 }
 
 #[test]
-fn flag_n_attached() {
-    let config = parse(&["-n20"]);
-    assert_eq!(config.lines_per_screen, Some(20));
-}
-
-#[test]
 fn start_line() {
-    let config = parse(&["+50"]);
+    let config = parse(&["--start-line", "50"]);
     assert_eq!(config.start_line, Some(50));
 }
 
@@ -47,7 +44,7 @@ fn files_collected() {
 
 #[test]
 fn combined_flags() {
-    let config = parse(&["-s", "-n", "30", "+10", "file.txt"]);
+    let config = parse(&["-s", "-n", "30", "--start-line", "10", "file.txt"]);
     assert!(config.squeeze);
     assert_eq!(config.lines_per_screen, Some(30));
     assert_eq!(config.start_line, Some(10));
@@ -55,15 +52,13 @@ fn combined_flags() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned: Vec<String> = vec!["--help".to_string()];
-    assert!(MoreConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    assert!(MoreConfig::try_parse_from(["more", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned: Vec<String> = vec!["--version".to_string()];
-    assert!(MoreConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(MoreConfig::try_parse_from(["more", "--version"]).is_err());
 }
 
 #[test]

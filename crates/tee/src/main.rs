@@ -1,15 +1,13 @@
 use std::io;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use tee::cli::TeeConfig;
 use tee::ops::tee;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = TeeConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = TeeConfig::parse();
 
     let mut stdin = io::stdin().lock();
 

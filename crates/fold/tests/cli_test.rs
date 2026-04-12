@@ -1,11 +1,14 @@
 use std::io::Cursor;
 
+use clap::Parser;
+
 use fold::cli::FoldConfig;
 use fold::ops::fold;
 
 fn parse(args: &[&str]) -> FoldConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    FoldConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["fold"];
+    full.extend_from_slice(args);
+    FoldConfig::parse_from(full)
 }
 
 fn run(args: &[&str], input: &str) -> String {
@@ -47,7 +50,6 @@ fn custom_width_40() {
 fn spaces_flag() {
     let input = "hello world this is a test of fold";
     let result = run(&["-w", "20", "-s"], input);
-    // Should break at spaces
     for line in result.trim_end().split('\n') {
         assert!(line.len() <= 20, "line too long: '{line}'");
     }
@@ -69,15 +71,13 @@ fn short_line_unchanged() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned: Vec<String> = vec!["--help".to_string()];
-    assert!(FoldConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    assert!(FoldConfig::try_parse_from(["fold", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned: Vec<String> = vec!["--version".to_string()];
-    assert!(FoldConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(FoldConfig::try_parse_from(["fold", "--version"]).is_err());
 }
 
 #[test]
