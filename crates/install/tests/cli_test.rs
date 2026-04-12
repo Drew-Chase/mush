@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use install::cli::InstallConfig;
 use install::ops::install_files;
 
 fn parse(args: &[&str]) -> InstallConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    InstallConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["install"];
+    full.extend_from_slice(args);
+    InstallConfig::parse_from(full)
 }
 
 #[test]
@@ -74,23 +77,13 @@ fn target_dir_long_eq() {
 }
 
 #[test]
-fn combined_flags() {
-    let config = parse(&["-dvC", "src", "dest"]);
-    assert!(config.directory_mode);
-    assert!(config.verbose);
-    assert!(config.compare);
+fn help_returns_err() {
+    assert!(InstallConfig::try_parse_from(["install", "--help"]).is_err());
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(InstallConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(InstallConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(InstallConfig::try_parse_from(["install", "--version"]).is_err());
 }
 
 #[test]

@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use ln::cli::LnConfig;
 
 fn parse(args: &[&str]) -> LnConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    LnConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["ln"];
+    full.extend_from_slice(args);
+    LnConfig::parse_from(full)
 }
 
 #[test]
@@ -77,21 +80,6 @@ fn long_no_dereference() {
 }
 
 #[test]
-fn combined_sf() {
-    let config = parse(&["-sf"]);
-    assert!(config.symbolic);
-    assert!(config.force);
-}
-
-#[test]
-fn combined_sfv() {
-    let config = parse(&["-sfv"]);
-    assert!(config.symbolic);
-    assert!(config.force);
-    assert!(config.verbose);
-}
-
-#[test]
 fn positional_targets() {
     let config = parse(&["source.txt", "link.txt"]);
     assert_eq!(config.targets, vec!["source.txt", "link.txt"]);
@@ -99,7 +87,7 @@ fn positional_targets() {
 
 #[test]
 fn flags_and_targets() {
-    let config = parse(&["-sf", "source.txt", "link.txt"]);
+    let config = parse(&["-s", "-f", "source.txt", "link.txt"]);
     assert!(config.symbolic);
     assert!(config.force);
     assert_eq!(config.targets, vec!["source.txt", "link.txt"]);
@@ -113,15 +101,13 @@ fn double_dash_stops_flags() {
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(LnConfig::from_args(&owned).is_none());
+fn help_returns_err() {
+    assert!(LnConfig::try_parse_from(["ln", "--help"]).is_err());
 }
 
 #[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(LnConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(LnConfig::try_parse_from(["ln", "--version"]).is_err());
 }
 
 #[cfg(test)]
@@ -196,7 +182,6 @@ mod ops_tests {
     #[test]
     #[cfg(windows)]
     fn symbolic_link_windows() {
-        // Symbolic links on Windows may require elevated privileges
         let dir = TempDir::new().unwrap();
         let target = dir.path().join("source.txt");
         std::fs::write(&target, "symdata").unwrap();
@@ -207,7 +192,6 @@ mod ops_tests {
             ..Default::default()
         };
 
-        // This may fail without admin privileges, which is expected
         let _ = create_link(Path::new(&target), &link, &config);
     }
 

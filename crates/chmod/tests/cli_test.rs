@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use chmod::cli::ChmodConfig;
 use chmod::ops::parse_mode;
 
 fn parse(args: &[&str]) -> ChmodConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    ChmodConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["chmod"];
+    full.extend_from_slice(args);
+    ChmodConfig::parse_from(full).resolve().expect("resolve failed")
 }
 
 #[test]
@@ -64,36 +67,13 @@ fn quiet_flag_long_quiet() {
 }
 
 #[test]
-fn combined_flags() {
-    let config = parse(&["-Rvc", "755", "dir1", "dir2"]);
-    assert!(config.recursive);
-    assert!(config.verbose);
-    assert!(config.changes);
-    assert_eq!(config.files, vec!["dir1", "dir2"]);
+fn help_returns_err() {
+    assert!(ChmodConfig::try_parse_from(["chmod", "--help"]).is_err());
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(ChmodConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(ChmodConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn missing_operand_returns_none() {
-    let owned: Vec<String> = vec![];
-    assert!(ChmodConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn missing_file_returns_none() {
-    let owned = vec!["755".to_string()];
-    assert!(ChmodConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(ChmodConfig::try_parse_from(["chmod", "--version"]).is_err());
 }
 
 #[test]

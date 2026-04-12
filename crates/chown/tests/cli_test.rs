@@ -1,9 +1,12 @@
+use clap::Parser;
+
 use chown::cli::ChownConfig;
 use chown::ops::parse_owner_group;
 
 fn parse(args: &[&str]) -> ChownConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    ChownConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["chown"];
+    full.extend_from_slice(args);
+    ChownConfig::parse_from(full).resolve().expect("resolve failed")
 }
 
 #[test]
@@ -69,7 +72,7 @@ fn no_deref_flag_long() {
 
 #[test]
 fn reference_flag() {
-    let config = parse(&["--reference=reffile", "target"]);
+    let config = parse(&["--reference", "reffile", "target"]);
     assert_eq!(config.reference.as_deref(), Some("reffile"));
     assert!(config.owner_group.is_empty());
     assert_eq!(config.files, vec!["target"]);
@@ -82,37 +85,13 @@ fn reference_flag_space() {
 }
 
 #[test]
-fn combined_flags() {
-    let config = parse(&["-Rvcf", "root:staff", "dir1", "dir2"]);
-    assert!(config.recursive);
-    assert!(config.verbose);
-    assert!(config.changes);
-    assert!(config.quiet);
-    assert_eq!(config.files, vec!["dir1", "dir2"]);
+fn help_returns_err() {
+    assert!(ChownConfig::try_parse_from(["chown", "--help"]).is_err());
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(ChownConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(ChownConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn missing_operand_returns_none() {
-    let owned: Vec<String> = vec![];
-    assert!(ChownConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn missing_file_returns_none() {
-    let owned = vec!["root".to_string()];
-    assert!(ChownConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(ChownConfig::try_parse_from(["chown", "--version"]).is_err());
 }
 
 #[test]

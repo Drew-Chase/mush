@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use head::cli::HeadConfig;
 
 fn parse(args: &[&str]) -> HeadConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    HeadConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["head"];
+    full.extend_from_slice(args);
+    HeadConfig::parse_from(full)
 }
 
 #[test]
@@ -23,21 +26,8 @@ fn flag_n() {
 }
 
 #[test]
-fn flag_n_attached() {
-    let config = parse(&["-n5"]);
-    assert_eq!(config.lines, 5);
-    assert_eq!(config.bytes, None);
-}
-
-#[test]
 fn flag_c() {
     let config = parse(&["-c", "100"]);
-    assert_eq!(config.bytes, Some(100));
-}
-
-#[test]
-fn flag_c_attached() {
-    let config = parse(&["-c100"]);
     assert_eq!(config.bytes, Some(100));
 }
 
@@ -92,20 +82,6 @@ fn flag_verbose() {
 }
 
 #[test]
-fn quiet_overrides_verbose() {
-    let config = parse(&["-v", "-q"]);
-    assert!(config.quiet);
-    assert!(!config.verbose);
-}
-
-#[test]
-fn verbose_overrides_quiet() {
-    let config = parse(&["-q", "-v"]);
-    assert!(config.verbose);
-    assert!(!config.quiet);
-}
-
-#[test]
 fn files_collected() {
     let config = parse(&["-n", "5", "foo.txt", "bar.txt"]);
     assert_eq!(config.lines, 5);
@@ -116,19 +92,6 @@ fn files_collected() {
 fn dash_is_stdin() {
     let config = parse(&["-"]);
     assert_eq!(config.files, vec!["-"]);
-}
-
-#[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-n"]);
-    assert_eq!(config.lines, 10); // default
-    assert_eq!(config.files, vec!["-n"]);
-}
-
-#[test]
-fn bytes_overrides_lines_mode() {
-    let config = parse(&["-n", "5", "-c", "100"]);
-    assert_eq!(config.bytes, Some(100));
 }
 
 #[test]

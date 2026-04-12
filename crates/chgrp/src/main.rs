@@ -1,13 +1,17 @@
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use chgrp::cli::ChgrpConfig;
 use chgrp::ops::chgrp;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = ChgrpConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
+    let config = match ChgrpConfig::parse().resolve() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
     };
 
     if let Err(_e) = chgrp(&config) {

@@ -29,7 +29,7 @@ pub fn copy_path(
     }
 
     if dest.exists() {
-        match config.overwrite {
+        match config.overwrite() {
             OverwriteMode::NoClobber => return Ok(()),
             OverwriteMode::Interactive => {
                 if !confirm(

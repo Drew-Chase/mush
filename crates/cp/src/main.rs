@@ -2,15 +2,13 @@ use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use cp::cli::CpConfig;
 use cp::ops::copy_path;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = CpConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = CpConfig::parse();
 
     if config.paths.is_empty() {
         eprintln!("cp: missing file operand");

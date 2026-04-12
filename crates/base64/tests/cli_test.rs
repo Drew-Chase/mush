@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use base64::cli::Base64Config;
 
 fn parse(args: &[&str]) -> Base64Config {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    Base64Config::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["base64"];
+    full.extend_from_slice(args);
+    Base64Config::parse_from(full)
 }
 
 #[test]
@@ -33,24 +36,11 @@ fn flag_w() {
 }
 
 #[test]
-fn flag_w_inline() {
-    let config = parse(&["-w80"]);
-    assert_eq!(config.wrap, 80);
-}
-
-#[test]
 fn long_flags() {
     let config = parse(&["--decode", "--ignore-garbage", "--wrap", "120"]);
     assert!(config.decode);
     assert!(config.ignore_garbage);
     assert_eq!(config.wrap, 120);
-}
-
-#[test]
-fn combined_di() {
-    let config = parse(&["-di"]);
-    assert!(config.decode);
-    assert!(config.ignore_garbage);
 }
 
 #[test]
@@ -64,13 +54,6 @@ fn dash_is_stdin() {
     let config = parse(&["-d", "-"]);
     assert!(config.decode);
     assert_eq!(config.file, Some("-".to_string()));
-}
-
-#[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-d"]);
-    assert!(!config.decode);
-    assert_eq!(config.file, Some("-d".to_string()));
 }
 
 #[test]

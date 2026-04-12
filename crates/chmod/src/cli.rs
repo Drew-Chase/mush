@@ -1,108 +1,51 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
 
-const HELP_TEXT: &str = "\
-Usage: chmod [OPTION]... MODE[,MODE]... FILE...
-  or:  chmod [OPTION]... --reference=RFILE FILE...
-Change the mode of each FILE to MODE.
-
-  -R, --recursive        change files and directories recursively
-  -v, --verbose          output a diagnostic for every file processed
-  -c, --changes          like verbose but report only when a change is made
-  -f, --silent, --quiet  suppress most error messages
-      --help             display this help and exit
-      --version          output version information and exit";
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Parser, Debug, Clone, Default, PartialEq, Eq)]
+#[command(
+    name = "chmod",
+    about = "Change the mode of each FILE to MODE.",
+    version,
+    disable_help_flag = true
+)]
 pub struct ChmodConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    /// Change files and directories recursively
+    #[arg(short = 'R', long = "recursive")]
     pub recursive: bool,
+
+    /// Output a diagnostic for every file processed
+    #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
+
+    /// Like verbose but report only when a change is made
+    #[arg(short = 'c', long = "changes")]
     pub changes: bool,
+
+    /// Suppress most error messages
+    #[arg(short = 'f', long = "quiet", aliases = ["silent"])]
     pub quiet: bool,
-    pub mode: String,
+
+    /// The permission mode (octal or symbolic) followed by files
+    #[arg(required = true)]
     pub files: Vec<String>,
+
+    /// The permission mode (populated from first positional)
+    #[arg(skip)]
+    pub mode: String,
 }
 
 impl ChmodConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = ChmodConfig::default();
-        let mut i = 0;
-        let mut parsing_flags = true;
-        let mut positional: Vec<String> = Vec::new();
-
-        while i < args.len() {
-            let arg = &args[i];
-
-            if !parsing_flags || !arg.starts_with('-') || arg == "-" {
-                positional.push(arg.clone());
-                i += 1;
-                continue;
-            }
-
-            if arg == "--" {
-                parsing_flags = false;
-                i += 1;
-                continue;
-            }
-
-            if arg == "--help" {
-                println!("{HELP_TEXT}");
-                return None;
-            }
-            if arg == "--version" {
-                println!("chmod {VERSION}");
-                return None;
-            }
-            if arg == "--recursive" {
-                config.recursive = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--verbose" {
-                config.verbose = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--changes" {
-                config.changes = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--silent" || arg == "--quiet" {
-                config.quiet = true;
-                i += 1;
-                continue;
-            }
-
-            // Short flags
-            let chars: Vec<char> = arg[1..].chars().collect();
-            for &c in &chars {
-                match c {
-                    'R' => config.recursive = true,
-                    'v' => config.verbose = true,
-                    'c' => config.changes = true,
-                    'f' => config.quiet = true,
-                    _ => {
-                        eprintln!("chmod: invalid option -- '{c}'");
-                    }
-                }
-            }
-            i += 1;
+    /// Post-process: split first positional as mode
+    pub fn resolve(mut self) -> Result<Self, String> {
+        if self.files.is_empty() {
+            return Err("chmod: missing operand".to_string());
         }
-
-        // First positional is mode, rest are files
-        if positional.is_empty() {
-            eprintln!("chmod: missing operand");
-            return None;
+        self.mode = self.files.remove(0);
+        if self.files.is_empty() {
+            return Err(format!("chmod: missing operand after '{}'", self.mode));
         }
-
-        config.mode = positional.remove(0);
-
-        if positional.is_empty() {
-            eprintln!("chmod: missing operand after '{}'", config.mode);
-            return None;
-        }
-
-        config.files = positional;
-        Some(config)
+        Ok(self)
     }
 }

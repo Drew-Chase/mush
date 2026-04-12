@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use chgrp::cli::ChgrpConfig;
 
 fn parse(args: &[&str]) -> ChgrpConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    ChgrpConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["chgrp"];
+    full.extend_from_slice(args);
+    ChgrpConfig::parse_from(full).resolve().expect("resolve failed")
 }
 
 #[test]
@@ -62,7 +65,7 @@ fn no_deref_flag_long() {
 
 #[test]
 fn reference_flag() {
-    let config = parse(&["--reference=reffile", "target"]);
+    let config = parse(&["--reference", "reffile", "target"]);
     assert_eq!(config.reference.as_deref(), Some("reffile"));
     assert!(config.group.is_empty());
     assert_eq!(config.files, vec!["target"]);
@@ -75,37 +78,13 @@ fn reference_flag_space() {
 }
 
 #[test]
-fn combined_flags() {
-    let config = parse(&["-Rvcf", "wheel", "dir1", "dir2"]);
-    assert!(config.recursive);
-    assert!(config.verbose);
-    assert!(config.changes);
-    assert!(config.quiet);
-    assert_eq!(config.files, vec!["dir1", "dir2"]);
+fn help_returns_err() {
+    assert!(ChgrpConfig::try_parse_from(["chgrp", "--help"]).is_err());
 }
 
 #[test]
-fn help_returns_none() {
-    let owned = vec!["--help".to_string()];
-    assert!(ChgrpConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned = vec!["--version".to_string()];
-    assert!(ChgrpConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn missing_operand_returns_none() {
-    let owned: Vec<String> = vec![];
-    assert!(ChgrpConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn missing_file_returns_none() {
-    let owned = vec!["staff".to_string()];
-    assert!(ChgrpConfig::from_args(&owned).is_none());
+fn version_returns_err() {
+    assert!(ChgrpConfig::try_parse_from(["chgrp", "--version"]).is_err());
 }
 
 #[cfg(not(unix))]

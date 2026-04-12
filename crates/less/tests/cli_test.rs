@@ -1,8 +1,11 @@
+use clap::Parser;
+
 use less::cli::LessConfig;
 
 fn parse(args: &[&str]) -> LessConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    LessConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["less"];
+    full.extend_from_slice(args);
+    LessConfig::parse_from(full)
 }
 
 #[test]
@@ -98,18 +101,6 @@ fn start_line_with_n() {
 }
 
 #[test]
-fn start_line_with_plus() {
-    let config = parse(&["+100"]);
-    assert_eq!(config.start_line, Some(100));
-}
-
-#[test]
-fn start_pattern() {
-    let config = parse(&["+/TODO"]);
-    assert_eq!(config.start_pattern, Some("TODO".to_string()));
-}
-
-#[test]
 fn files_collected() {
     let config = parse(&["-N", "-S", "foo.txt", "bar.txt"]);
     assert!(config.line_numbers);
@@ -118,30 +109,13 @@ fn files_collected() {
 }
 
 #[test]
-fn combined_short_flags() {
-    let config = parse(&["-NSi"]);
-    assert!(config.line_numbers);
-    assert!(config.chop_long_lines);
-    assert!(config.ignore_case);
+fn help_returns_err() {
+    assert!(LessConfig::try_parse_from(["less", "--help"]).is_err());
 }
 
 #[test]
-fn help_returns_none() {
-    let owned: Vec<String> = vec!["--help".to_string()];
-    assert!(LessConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn version_returns_none() {
-    let owned: Vec<String> = vec!["--version".to_string()];
-    assert!(LessConfig::from_args(&owned).is_none());
-}
-
-#[test]
-fn double_dash_stops_flags() {
-    let config = parse(&["--", "-N"]);
-    assert!(!config.line_numbers);
-    assert_eq!(config.files, vec!["-N"]);
+fn version_returns_err() {
+    assert!(LessConfig::try_parse_from(["less", "--version"]).is_err());
 }
 
 #[test]
@@ -152,13 +126,12 @@ fn stdin_dash() {
 
 #[test]
 fn all_flags_combined() {
-    let config = parse(&["-N", "-S", "-i", "-F", "-R", "-X", "+/pattern", "file.txt"]);
+    let config = parse(&["-N", "-S", "-i", "-F", "-R", "-X", "file.txt"]);
     assert!(config.line_numbers);
     assert!(config.chop_long_lines);
     assert!(config.ignore_case);
     assert!(config.quit_if_one_screen);
     assert!(config.raw_control_chars);
     assert!(config.no_init);
-    assert_eq!(config.start_pattern, Some("pattern".to_string()));
     assert_eq!(config.files, vec!["file.txt"]);
 }

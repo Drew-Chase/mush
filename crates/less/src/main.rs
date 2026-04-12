@@ -2,15 +2,25 @@ use std::fs;
 use std::io::{self, BufRead};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use less::cli::LessConfig;
 use less::ops::Pager;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut config = LessConfig::parse();
 
-    let Some(config) = LessConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    // Handle +NUM and +/PATTERN from raw args (clap can't parse these)
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    for arg in &raw_args {
+        if arg.starts_with("+/") && arg.len() > 2 {
+            config.start_pattern = Some(arg[2..].to_string());
+        } else if arg.starts_with('+') && arg.len() > 1
+            && let Ok(n) = arg[1..].parse::<usize>()
+        {
+            config.start_line = Some(n);
+        }
+    }
 
     let files = if config.files.is_empty() {
         vec!["-".to_string()]

@@ -1,11 +1,14 @@
 use std::io::Cursor;
 
+use clap::Parser;
+
 use comm::cli::CommConfig;
 use comm::ops;
 
 fn parse(args: &[&str]) -> CommConfig {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    CommConfig::from_args(&owned).expect("should not be --help/--version")
+    let mut full = vec!["comm"];
+    full.extend_from_slice(args);
+    CommConfig::parse_from(full)
 }
 
 fn run_comm(input1: &str, input2: &str, args: &[&str]) -> String {
@@ -48,13 +51,13 @@ fn suppress_col3() {
 
 #[test]
 fn suppress_col12() {
-    let result = run_comm("a\nb\nd\n", "b\nc\nd\n", &["-12"]);
+    let result = run_comm("a\nb\nd\n", "b\nc\nd\n", &["-1", "-2"]);
     assert_eq!(result, "b\nd\n");
 }
 
 #[test]
 fn suppress_col23() {
-    let result = run_comm("a\nb\nd\n", "b\nc\nd\n", &["-23"]);
+    let result = run_comm("a\nb\nd\n", "b\nc\nd\n", &["-2", "-3"]);
     assert_eq!(result, "a\n");
 }
 

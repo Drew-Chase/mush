@@ -1,134 +1,60 @@
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
 
-const HELP_TEXT: &str = "\
-Usage: chown [OPTION]... OWNER[:GROUP] FILE...
-  or:  chown [OPTION]... --reference=RFILE FILE...
-Change the owner and/or group of each FILE to OWNER and/or GROUP.
-
-  -R, --recursive      operate on files and directories recursively
-  -v, --verbose        output a diagnostic for every file processed
-  -c, --changes        like verbose but report only when a change is made
-  -f, --silent, --quiet suppress most error messages
-  -h, --no-dereference  affect symbolic links instead of referenced file
-      --reference=RFILE  use RFILE's owner and group
-      --help           display this help and exit
-      --version        output version information and exit";
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Parser, Debug, Clone, Default, PartialEq, Eq)]
+#[command(
+    name = "chown",
+    about = "Change the owner and/or group of each FILE to OWNER and/or GROUP.",
+    version,
+    disable_help_flag = true
+)]
 pub struct ChownConfig {
+    #[arg(long = "help", action = clap::ArgAction::Help, help = "Print help")]
+    pub help: Option<bool>,
+
+    /// Operate on files and directories recursively
+    #[arg(short = 'R', long = "recursive")]
     pub recursive: bool,
+
+    /// Output a diagnostic for every file processed
+    #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
+
+    /// Like verbose but report only when a change is made
+    #[arg(short = 'c', long = "changes")]
     pub changes: bool,
+
+    /// Suppress most error messages
+    #[arg(short = 'f', long = "quiet", aliases = ["silent"])]
     pub quiet: bool,
+
+    /// Affect symbolic links instead of referenced file
+    #[arg(short = 'h', long = "no-dereference")]
     pub no_deref: bool,
+
+    /// Use RFILE's owner and group
+    #[arg(long = "reference")]
     pub reference: Option<String>,
-    pub owner_group: String,
+
+    /// Owner[:group] and files (first arg is owner_group unless --reference is used)
     pub files: Vec<String>,
+
+    /// Owner[:group] specification (populated from first positional when --reference is absent)
+    #[arg(skip)]
+    pub owner_group: String,
 }
 
 impl ChownConfig {
-    pub fn from_args(args: &[String]) -> Option<Self> {
-        let mut config = ChownConfig::default();
-        let mut i = 0;
-        let mut parsing_flags = true;
-        let mut positional: Vec<String> = Vec::new();
-
-        while i < args.len() {
-            let arg = &args[i];
-
-            if !parsing_flags || !arg.starts_with('-') || arg == "-" {
-                positional.push(arg.clone());
-                i += 1;
-                continue;
+    /// Post-process: split first positional as owner_group when --reference is absent
+    pub fn resolve(mut self) -> Result<Self, String> {
+        if self.reference.is_none() {
+            if self.files.is_empty() {
+                return Err("chown: missing operand".to_string());
             }
-
-            if arg == "--" {
-                parsing_flags = false;
-                i += 1;
-                continue;
-            }
-
-            if arg == "--help" {
-                println!("{HELP_TEXT}");
-                return None;
-            }
-            if arg == "--version" {
-                println!("chown {VERSION}");
-                return None;
-            }
-            if arg == "--recursive" {
-                config.recursive = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--verbose" {
-                config.verbose = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--changes" {
-                config.changes = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--silent" || arg == "--quiet" {
-                config.quiet = true;
-                i += 1;
-                continue;
-            }
-            if arg == "--no-dereference" {
-                config.no_deref = true;
-                i += 1;
-                continue;
-            }
-            if let Some(val) = arg.strip_prefix("--reference=") {
-                config.reference = Some(val.to_string());
-                i += 1;
-                continue;
-            }
-            if arg == "--reference" {
-                i += 1;
-                if i < args.len() {
-                    config.reference = Some(args[i].clone());
-                } else {
-                    eprintln!("chown: option '--reference' requires an argument");
-                    return None;
-                }
-                i += 1;
-                continue;
-            }
-
-            // Short flags
-            let chars: Vec<char> = arg[1..].chars().collect();
-            for &c in &chars {
-                match c {
-                    'R' => config.recursive = true,
-                    'v' => config.verbose = true,
-                    'c' => config.changes = true,
-                    'f' => config.quiet = true,
-                    'h' => config.no_deref = true,
-                    _ => {
-                        eprintln!("chown: invalid option -- '{c}'");
-                    }
-                }
-            }
-            i += 1;
+            self.owner_group = self.files.remove(0);
         }
-
-        if config.reference.is_none() {
-            if positional.is_empty() {
-                eprintln!("chown: missing operand");
-                return None;
-            }
-            config.owner_group = positional.remove(0);
+        if self.files.is_empty() {
+            return Err("chown: missing operand".to_string());
         }
-
-        if positional.is_empty() {
-            eprintln!("chown: missing operand");
-            return None;
-        }
-
-        config.files = positional;
-        Some(config)
+        Ok(self)
     }
 }

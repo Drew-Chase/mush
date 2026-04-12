@@ -2,15 +2,13 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use base64::cli::Base64Config;
 use base64::ops::{decode, encode};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = Base64Config::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = Base64Config::parse();
 
     let mut input = Vec::new();
 

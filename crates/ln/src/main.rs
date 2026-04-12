@@ -1,15 +1,13 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use ln::cli::LnConfig;
 use ln::ops::create_link;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = LnConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = LnConfig::parse();
 
     if config.targets.len() < 2 {
         eprintln!("ln: missing file operand");

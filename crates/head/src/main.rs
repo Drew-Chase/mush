@@ -2,15 +2,13 @@ use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use head::cli::HeadConfig;
 use head::ops::head;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let Some(config) = HeadConfig::from_args(&args) else {
-        return ExitCode::SUCCESS;
-    };
+    let config = HeadConfig::parse();
 
     let files = if config.files.is_empty() {
         vec!["-".to_string()]

@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use tempfile::TempDir;
 
-use cp::cli::{CpConfig, OverwriteMode};
+use cp::cli::CpConfig;
 use cp::ops::copy_path;
 
 fn default_config() -> CpConfig {
@@ -96,7 +96,7 @@ fn overwrite_noclobber_skips() {
     std::fs::write(&dest, "old").unwrap();
 
     let config = CpConfig {
-        overwrite: OverwriteMode::NoClobber,
+        no_clobber_flag: true,
         ..default_config()
     };
     let (mut reader, mut writer) = noop_io();
@@ -113,7 +113,7 @@ fn interactive_accept_copies() {
     std::fs::write(&dest, "old").unwrap();
 
     let config = CpConfig {
-        overwrite: OverwriteMode::Interactive,
+        interactive_flag: true,
         ..default_config()
     };
     let mut reader = Cursor::new(b"y\n".to_vec());
@@ -131,7 +131,7 @@ fn interactive_decline_skips() {
     std::fs::write(&dest, "old").unwrap();
 
     let config = CpConfig {
-        overwrite: OverwriteMode::Interactive,
+        interactive_flag: true,
         ..default_config()
     };
     let mut reader = Cursor::new(b"n\n".to_vec());
