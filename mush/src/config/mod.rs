@@ -121,7 +121,9 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
 
-        std::fs::write(path, self.to_string())?;
+        let toml_str = toml::to_string_pretty(self)
+            .map_err(|e| eyre!("config serialize: {e}"))?;
+        std::fs::write(path, toml_str)?;
         Ok(())
     }
 }
