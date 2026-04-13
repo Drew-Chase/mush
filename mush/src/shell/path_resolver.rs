@@ -22,20 +22,26 @@ pub fn is_executable(name: &str) -> bool {
 }
 
 pub fn find_in_path(name: &str) -> Option<PathBuf> {
-    let lower = name.to_lowercase();
+    // On Windows the filesystem is case-insensitive, so normalise the key.
+    // On Unix keep the original case to avoid confusing Foo and foo.
+    let key = if cfg!(windows) {
+        name.to_lowercase()
+    } else {
+        name.to_string()
+    };
 
     // Check cache first
     if let Ok(map) = cache().lock()
-        && let Some(cached) = map.get(&lower)
+        && let Some(cached) = map.get(&key)
     {
         return cached.clone();
     }
 
-    let result = search_path(&lower);
+    let result = search_path(name);
 
     // Store in cache
     if let Ok(mut map) = cache().lock() {
-        map.insert(lower, result.clone());
+        map.insert(key, result.clone());
     }
 
     result

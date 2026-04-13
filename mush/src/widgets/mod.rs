@@ -5,7 +5,6 @@ use ratatui::crossterm::{execute, event::{EnableMouseCapture, DisableMouseCaptur
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::process::{Child, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -1941,10 +1940,14 @@ fn clipboard_get() -> Option<String> {
         .ok()
 }
 
+/// Stable DJB2 hash for persistent help cache comparison.
+/// Unlike DefaultHasher, this produces the same output across Rust versions.
 fn compute_help_hash(text: &str) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    text.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    let mut hash: u64 = 5381;
+    for b in text.bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(b as u64);
+    }
+    format!("{:016x}", hash)
 }
 
 /// Decodes raw bytes from a child process, handling UTF-16 LE output (common on Windows

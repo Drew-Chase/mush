@@ -85,7 +85,9 @@ pub fn get_appdata_path() -> PathBuf {
         PathBuf::from(config_path)
     } else if let Some(local_appdata) = dirs::config_local_dir() {
         local_appdata.join("mush")
+    } else if let Some(config) = dirs::config_dir() {
+        config.join("mush")
     } else {
-        dirs::config_dir().unwrap().join("mush")
+        std::env::temp_dir().join("mush")
     }
 }

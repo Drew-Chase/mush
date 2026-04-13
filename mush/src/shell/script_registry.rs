@@ -67,6 +67,14 @@ pub fn scan_scripts(scripts_dir: &Path) {
             _ => dir.join("index.ts"),
         };
 
+        // Guard against path traversal: ensure entry_point stays within script dir
+        if let Ok(canonical) = entry_point.canonicalize()
+            && let Ok(canonical_dir) = dir.canonicalize()
+            && !canonical.starts_with(&canonical_dir)
+        {
+            continue;
+        }
+
         scripts.push(ScriptEntry {
             name,
             description,

@@ -1877,6 +1877,31 @@ fn execute_umask(args: &[String]) -> BuiltinResult {
     }
 }
 
+/// Read the current umask without a set-then-restore race.
+/// On Linux, reads from /proc/self/status. Falls back to the
+/// traditional (racy) umask()/umask() pair on other Unix systems.
+#[cfg(unix)]
+fn read_current_umask() -> u32 {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+            for line in status.lines() {
+                if let Some(val) = line.strip_prefix("Umask:") {
+                    if let Ok(mask) = u32::from_str_radix(val.trim(), 8) {
+                        return mask;
+                    }
+                }
+            }
+        }
+    }
+    // Fallback for non-Linux or if /proc read fails
+    unsafe {
+        let old = libc::umask(0o022);
+        libc::umask(old);
+        old as u32
+    }
+}
+
 #[cfg(unix)]
 fn execute_umask_unix(args: &[String]) -> BuiltinResult {
     let symbolic = args.iter().any(|a| a == "-S");
@@ -1898,11 +1923,7 @@ fn execute_umask_unix(args: &[String]) -> BuiltinResult {
         }
     } else {
         // Display current umask
-        let current = unsafe {
-            let old = libc::umask(0o022);
-            libc::umask(old);
-            old
-        };
+        let current = read_current_umask();
 
         if symbolic {
             let u = 7 - ((current >> 6) & 7);
