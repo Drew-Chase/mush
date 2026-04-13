@@ -328,8 +328,7 @@ pub fn execute_simple_sync(cmd: &SimpleCommand) -> SyncExecResult {
             super::super::widgets::force_color_env(
                 proc.arg("run")
                     .arg(&entry.entry_point)
-                    .args(&args)
-                    .current_dir(&entry.script_dir),
+                    .args(&args),
             );
             apply_stdio(&mut proc, redir);
 
@@ -614,8 +613,7 @@ pub fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
 
                 let mut proc = Command::new(&bun_path);
                 super::super::widgets::force_color_env(
-                    proc.arg("run").arg(&entry.entry_point).args(&args)
-                        .current_dir(&entry.script_dir),
+                    proc.arg("run").arg(&entry.entry_point).args(&args),
                 );
 
                 let stdin_bytes = match prev.take() {
@@ -772,8 +770,7 @@ pub fn execute_pipeline(pipeline: &Pipeline, force_interactive: bool) -> Pipelin
                 super::super::widgets::force_color_env(
                     proc.arg("run")
                         .arg(&entry.entry_point)
-                        .args(&args)
-                        .current_dir(&entry.script_dir),
+                        .args(&args),
                 );
                 apply_stdio(&mut proc, redir);
 
@@ -899,8 +896,7 @@ pub fn execute_pipeline(pipeline: &Pipeline, force_interactive: bool) -> Pipelin
                     super::super::widgets::force_color_env(
                         proc.arg("run")
                             .arg(&entry.entry_point)
-                            .args(&args)
-                            .current_dir(&entry.script_dir),
+                            .args(&args),
                     );
 
                     if let Some(stdin) = prev_stdout.take() {
