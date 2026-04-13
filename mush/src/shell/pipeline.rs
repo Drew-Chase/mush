@@ -540,7 +540,12 @@ pub fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
 
         match kind {
             CommandKind::Builtin(builtin) => {
-                let result = builtins::execute(builtin, &args);
+                let stdin_bytes = match &prev {
+                    Some(PrevOutput::Bytes(data)) => Some(data.as_slice()),
+                    _ => None,
+                };
+                let result = builtins::execute_with_stdin(builtin, &args, stdin_bytes);
+                prev = None; // consumed
                 if is_last {
                     last_result = SyncExecResult {
                         output: result.output,

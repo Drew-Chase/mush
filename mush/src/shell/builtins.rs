@@ -351,6 +351,10 @@ pub fn lookup(name: &str) -> Option<BuiltinCommand> {
 }
 
 pub fn execute(cmd: BuiltinCommand, args: &[String]) -> BuiltinResult {
+    execute_with_stdin(cmd, args, None)
+}
+
+pub fn execute_with_stdin(cmd: BuiltinCommand, args: &[String], stdin_data: Option<&[u8]>) -> BuiltinResult {
     // Intercept --help (skip for `test` where flags like -h have real meaning)
     if !matches!(cmd, BuiltinCommand::Test)
         && (args.iter().any(|a| a == "--help")
@@ -379,7 +383,7 @@ pub fn execute(cmd: BuiltinCommand, args: &[String]) -> BuiltinResult {
         BuiltinCommand::Type => execute_type(args),
         BuiltinCommand::History => execute_history(args),
         BuiltinCommand::Source => execute_source(args),
-        BuiltinCommand::Read => execute_read(args),
+        BuiltinCommand::Read => execute_read(args, stdin_data),
         BuiltinCommand::Test => execute_test(args),
         BuiltinCommand::True => ok(Vec::new()),
         BuiltinCommand::False => BuiltinResult {
@@ -1126,10 +1130,29 @@ fn execute_source(args: &[String]) -> BuiltinResult {
         Err(e) => return fail(format!("source: {}: {e}", args[0])),
     };
 
+    // Join line continuations (lines ending with \) before processing
+    let mut logical_lines: Vec<String> = Vec::new();
+    let mut current_line = String::new();
+    for line in content.lines() {
+        let trimmed = line.trim_end();
+        if let Some(stripped) = trimmed.strip_suffix('\\') {
+            current_line.push_str(stripped);
+            current_line.push(' ');
+        } else {
+            current_line.push_str(trimmed);
+            if !current_line.is_empty() {
+                logical_lines.push(std::mem::take(&mut current_line));
+            }
+        }
+    }
+    if !current_line.is_empty() {
+        logical_lines.push(current_line);
+    }
+
     let mut all_output = Vec::new();
     let mut exit_code = 0;
 
-    for line in content.lines() {
+    for line in &logical_lines {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
@@ -1160,9 +1183,7 @@ fn execute_source(args: &[String]) -> BuiltinResult {
 
 // ── read ────────────────────────────────────────────────────────────────────
 
-fn execute_read(args: &[String]) -> BuiltinResult {
-    // In a TUI shell, read works with piped input only.
-    // Interactive prompting is not supported yet.
+fn execute_read(args: &[String], stdin_data: Option<&[u8]>) -> BuiltinResult {
     let mut var_names = Vec::new();
     let mut prompt = None;
     let mut i = 0;
@@ -1196,15 +1217,37 @@ fn execute_read(args: &[String]) -> BuiltinResult {
         output.push(p);
     }
 
-    // Since we don't have stdin_data passed to builtins yet,
-    // read from environment-available sources.
-    // For piped input, the pipeline would need to pass stdin_data.
-    // For now, return exit code 1 (no input available).
+    // Read from piped stdin data if available
+    let line = match stdin_data {
+        Some(data) => {
+            let text = String::from_utf8_lossy(data);
+            // Take only the first line
+            text.lines().next().unwrap_or("").to_string()
+        }
+        None => {
+            // No piped input available — return exit code 1
+            return BuiltinResult {
+                output,
+                exit_app: false,
+                change_dir: None,
+                exit_code: 1,
+            };
+        }
+    };
+
+    // Split input across variable names (last var gets the remainder)
+    let fields: Vec<&str> = line.splitn(var_names.len(), char::is_whitespace).collect();
+    for (j, var_name) in var_names.iter().enumerate() {
+        let value = fields.get(j).unwrap_or(&"");
+        // SAFETY: mush is single-threaded for command execution
+        unsafe { std::env::set_var(var_name, value) };
+    }
+
     BuiltinResult {
         output,
         exit_app: false,
         change_dir: None,
-        exit_code: 1,
+        exit_code: 0,
     }
 }
 
@@ -1734,14 +1777,14 @@ fn parse_expr_add(args: &[String], pos: &mut usize) -> Result<String, String> {
                 let right = parse_expr_mul(args, pos)?;
                 let l: i64 = left.parse().map_err(|_| format!("non-integer argument: {left}"))?;
                 let r: i64 = right.parse().map_err(|_| format!("non-integer argument: {right}"))?;
-                left = (l + r).to_string();
+                left = l.checked_add(r).ok_or("integer overflow")?.to_string();
             }
             "-" => {
                 *pos += 1;
                 let right = parse_expr_mul(args, pos)?;
                 let l: i64 = left.parse().map_err(|_| format!("non-integer argument: {left}"))?;
                 let r: i64 = right.parse().map_err(|_| format!("non-integer argument: {right}"))?;
-                left = (l - r).to_string();
+                left = l.checked_sub(r).ok_or("integer overflow")?.to_string();
             }
             _ => break,
         }
@@ -1759,7 +1802,7 @@ fn parse_expr_mul(args: &[String], pos: &mut usize) -> Result<String, String> {
                 let right = parse_expr_primary(args, pos)?;
                 let l: i64 = left.parse().map_err(|_| format!("non-integer argument: {left}"))?;
                 let r: i64 = right.parse().map_err(|_| format!("non-integer argument: {right}"))?;
-                left = (l * r).to_string();
+                left = l.checked_mul(r).ok_or("integer overflow")?.to_string();
             }
             "/" => {
                 *pos += 1;

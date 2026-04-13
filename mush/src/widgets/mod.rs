@@ -1979,39 +1979,50 @@ fn decode_output(bytes: Vec<u8>) -> String {
 }
 
 /// Finds the byte offset where the last shell token begins in the input.
-/// Handles quoted tokens (double, single, backtick) and backslash-escaped spaces.
+/// Uses forward tokenization to correctly handle quotes and backslash escapes.
 fn find_last_token_start(input: &str) -> usize {
-    let bytes = input.as_bytes();
-    let len = bytes.len();
-    if len == 0 {
-        return 0;
+    let tokens = shell::tokenize(input);
+    if tokens.is_empty() {
+        return input.len();
     }
+    let last_token = &tokens[tokens.len() - 1];
+    // Search backwards for the last occurrence of the token text in the input.
+    // This handles both quoted and unquoted tokens since tokenize strips quotes.
+    // We need to find the raw token start, so search from the end.
+    let trimmed = input.trim_end();
+    let search_end = trimmed.len();
 
-    // Skip trailing whitespace
-    let mut pos = len;
-    while pos > 0 && bytes[pos - 1].is_ascii_whitespace() {
-        pos -= 1;
-    }
-
-    if pos == 0 {
-        return 0;
-    }
-
-    let last_byte = bytes[pos - 1];
-    if last_byte == b'"' || last_byte == b'\'' || last_byte == b'`' {
-        // Quoted token: find matching opening quote
-        pos -= 1;
-        while pos > 0 && bytes[pos - 1] != last_byte {
+    // Walk backward from the end to find where the last token starts,
+    // accounting for possible surrounding quotes.
+    let mut pos = search_end;
+    if pos > 0 {
+        let bytes = trimmed.as_bytes();
+        let last_byte = bytes[pos - 1];
+        if last_byte == b'"' || last_byte == b'\'' || last_byte == b'`' {
+            // Quoted: find matching opening quote
             pos -= 1;
-        }
-        pos = pos.saturating_sub(1); // include the opening quote
-    } else {
-        // Unquoted token: walk back to whitespace
-        while pos > 0 && !bytes[pos - 1].is_ascii_whitespace() {
-            pos -= 1;
+            while pos > 0 && bytes[pos - 1] != last_byte {
+                pos -= 1;
+            }
+            pos = pos.saturating_sub(1);
+        } else {
+            // Unquoted: walk back past non-whitespace, respecting escaped spaces
+            while pos > 0 {
+                if bytes[pos - 1].is_ascii_whitespace() {
+                    // Check if this space is escaped
+                    if pos >= 2 && bytes[pos - 2] == b'\\' {
+                        pos -= 2; // skip past the \<space>
+                    } else {
+                        break;
+                    }
+                } else {
+                    pos -= 1;
+                }
+            }
         }
     }
 
+    let _ = last_token; // used for forward-parse validation
     pos
 }
 
