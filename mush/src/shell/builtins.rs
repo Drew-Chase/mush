@@ -417,7 +417,12 @@ fn execute_cd(args: &[String]) -> BuiltinResult {
         }
     } else {
         let path_str = &args[0];
-        if path_str == "~" {
+        if path_str == "-" {
+            match std::env::var("OLDPWD") {
+                Ok(old) if !old.is_empty() => PathBuf::from(old),
+                _ => return err("cd: OLDPWD not set".to_string()),
+            }
+        } else if path_str == "~" {
             match home_dir() {
                 Some(home) => home,
                 None => return err("cd: could not determine home directory".to_string()),
@@ -432,13 +437,22 @@ fn execute_cd(args: &[String]) -> BuiltinResult {
         }
     };
 
+    // Save current directory as OLDPWD before changing
+    let old_cwd = std::env::current_dir().ok();
+
     match std::env::set_current_dir(&target) {
-        Ok(()) => BuiltinResult {
-            output: Vec::new(),
-            exit_app: false,
-            change_dir: Some(std::env::current_dir().unwrap_or(target)),
-            exit_code: 0,
-        },
+        Ok(()) => {
+            if let Some(old) = old_cwd {
+                // SAFETY: mush is single-threaded for command execution
+                unsafe { std::env::set_var("OLDPWD", &old) };
+            }
+            BuiltinResult {
+                output: Vec::new(),
+                exit_app: false,
+                change_dir: Some(std::env::current_dir().unwrap_or(target)),
+                exit_code: 0,
+            }
+        }
         Err(e) => err(format!("cd: {}: {}", target.display(), e)),
     }
 }
@@ -1401,10 +1415,12 @@ fn execute_pushd(args: &[String]) -> BuiltinResult {
     if args.is_empty() {
         // No args: swap top two directories
         let mut stack = DIR_STACK.lock().unwrap();
-        if let Some(top) = stack.pop() {
-            stack.push(current);
+        if let Some(top) = stack.last().cloned() {
+            // Try cd first, only mutate the stack on success
             match std::env::set_current_dir(&top) {
                 Ok(()) => {
+                    stack.pop();
+                    stack.push(current);
                     let new_cwd = std::env::current_dir().unwrap_or(top);
                     BuiltinResult {
                         output: vec![new_cwd.to_string_lossy().to_string()],
@@ -1420,9 +1436,10 @@ fn execute_pushd(args: &[String]) -> BuiltinResult {
         }
     } else {
         let target = PathBuf::from(&args[0]);
-        DIR_STACK.lock().unwrap().push(current);
+        // Try cd first, only push to stack on success
         match std::env::set_current_dir(&target) {
             Ok(()) => {
+                DIR_STACK.lock().unwrap().push(current);
                 let new_cwd = std::env::current_dir().unwrap_or(target);
                 BuiltinResult {
                     output: vec![new_cwd.to_string_lossy().to_string()],
@@ -1431,11 +1448,7 @@ fn execute_pushd(args: &[String]) -> BuiltinResult {
                     exit_code: 0,
                 }
             }
-            Err(e) => {
-                // Undo the push since cd failed
-                DIR_STACK.lock().unwrap().pop();
-                fail(format!("pushd: {}: {e}", args[0]))
-            }
+            Err(e) => fail(format!("pushd: {}: {e}", args[0])),
         }
     }
 }
