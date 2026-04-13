@@ -15,7 +15,12 @@ use crate::config::Config;
 pub enum CommandKind {
     Builtin(builtins::BuiltinCommand),
     External(PathBuf),
-    Alias(Vec<String>),
+    /// An alias expansion: the raw command string, plus any extra arguments
+    /// the user appended after the alias name.
+    Alias {
+        command: String,
+        extra_args: Vec<String>,
+    },
     Script(script_registry::ScriptEntry),
     NotFound,
 }
@@ -28,12 +33,11 @@ pub fn resolve_command(input: &str) -> CommandKind {
         None => return CommandKind::NotFound,
     };
 
-    // Check aliases first — only expand if user typed just the alias name (no extra args)
+    // Check aliases first — expand regardless of extra args
     let config = Config::get();
-    if let Some(commands) = config.alias.get_commands(name)
-        && tokens.len() == 1
-    {
-        return CommandKind::Alias(commands);
+    if let Some(command) = config.alias.get_commands(name) {
+        let extra_args = tokens[1..].to_vec();
+        return CommandKind::Alias { command, extra_args };
     }
 
     if let Some(builtin) = builtins::lookup(name) {

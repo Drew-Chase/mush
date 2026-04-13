@@ -402,37 +402,40 @@ pub fn execute_simple_sync(cmd: &SimpleCommand) -> SyncExecResult {
                 }
             }
         }
-        CommandKind::Alias(commands) => {
-            let mut all_output = Vec::new();
-            let mut exit_app = false;
-            let mut exit_code = 0;
-            for cmd_str in &commands {
-                match super::parser::parse(cmd_str) {
-                    Ok(cl) => {
-                        for chain in &cl.chains {
-                            let result = execute_chain_sync(chain);
-                            all_output.extend(result.output);
-                            exit_code = result.exit_code;
-                            if result.exit_app {
-                                exit_app = true;
-                                break;
-                            }
+        CommandKind::Alias { command, extra_args } => {
+            // Append any extra arguments the user typed after the alias name
+            let full_cmd = if extra_args.is_empty() {
+                command
+            } else {
+                format!("{} {}", command, extra_args.join(" "))
+            };
+            match super::parser::parse(&full_cmd) {
+                Ok(cl) => {
+                    let mut all_output = Vec::new();
+                    let mut exit_app = false;
+                    let mut exit_code = 0;
+                    for chain in &cl.chains {
+                        let result = execute_chain_sync(chain);
+                        all_output.extend(result.output);
+                        exit_code = result.exit_code;
+                        if result.exit_app {
+                            exit_app = true;
+                            break;
                         }
                     }
-                    Err(e) => {
-                        all_output.push(format!("parse error: {e}"));
-                        exit_code = 1;
+                    SyncExecResult {
+                        output: all_output,
+                        exit_code,
+                        exit_app,
+                        change_dir: false,
                     }
                 }
-                if exit_app {
-                    break;
-                }
-            }
-            SyncExecResult {
-                output: all_output,
-                exit_code,
-                exit_app,
-                change_dir: false,
+                Err(e) => SyncExecResult {
+                    output: vec![format!("parse error: {e}")],
+                    exit_code: 1,
+                    exit_app: false,
+                    change_dir: false,
+                },
             }
         }
         CommandKind::NotFound => {
@@ -706,7 +709,7 @@ pub fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
                     }
                 }
             }
-            CommandKind::Alias(_) | CommandKind::NotFound => {
+            CommandKind::Alias { .. } | CommandKind::NotFound => {
                 let sync = execute_simple_sync(cmd);
                 if is_last {
                     last_result = sync;

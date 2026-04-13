@@ -17,9 +17,25 @@ impl Default for Aliases {
 }
 
 impl Aliases {
-    /// Look up an alias and parse its value into individual commands.
-    pub fn get_commands(&self, name: &str) -> Option<Vec<String>> {
-        self.entries.get(name).map(|raw| parse_commands(raw))
+    /// Look up an alias and return its raw value as a single command string.
+    /// The shell parser handles `&&`, `||`, `;`, and pipes correctly, so we
+    /// must NOT pre-split — that would destroy conditional semantics.
+    /// Multiline aliases are joined with ` ; ` so the parser sees them as
+    /// sequential commands.
+    pub fn get_commands(&self, name: &str) -> Option<String> {
+        self.entries.get(name).map(|raw| {
+            let trimmed = raw.trim();
+            if trimmed.contains('\n') {
+                trimmed
+                    .lines()
+                    .map(|l| l.trim())
+                    .filter(|l| !l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ; ")
+            } else {
+                trimmed.to_string()
+            }
+        })
     }
 
     pub fn has(&self, name: &str) -> bool {
@@ -27,45 +43,20 @@ impl Aliases {
     }
 }
 
-/// Splits a raw alias value into individual commands.
-/// Supports three formats:
-/// - Multiline (each line is a command)
-/// - Semicolon-separated (`cmd1; cmd2`)
-/// - `&&`-separated (`cmd1 && cmd2`)
-pub fn parse_commands(raw: &str) -> Vec<String> {
-    let trimmed = raw.trim();
-
-    // If multiline, split on newlines first
-    if trimmed.contains('\n') {
-        return trimmed
-            .lines()
-            .flat_map(|line| split_line(line.trim()))
-            .filter(|s| !s.is_empty())
-            .collect();
-    }
-
-    // Single line: split on ; and &&
-    split_line(trimmed)
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect()
-}
-
-/// Splits a single line on `;` and `&&` separators.
-fn split_line(line: &str) -> Vec<String> {
-    // First split on &&, then split each part on ;
-    line.split("&&")
-        .flat_map(|part| part.split(';'))
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect()
-}
-
 /// Formats the raw alias value into a compact single-line description
 /// suitable for autocomplete display.
 pub fn format_description(raw: &str) -> String {
-    let commands = parse_commands(raw);
-    commands.join("; ")
+    let trimmed = raw.trim();
+    if trimmed.contains('\n') {
+        trimmed
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ")
+    } else {
+        trimmed.to_string()
+    }
 }
 
 impl fmt::Display for Aliases {
