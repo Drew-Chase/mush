@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: windows-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: macos-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact_name: macos-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: linux-x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Collect binaries
+        shell: bash
+        run: |
+          mkdir -p target/dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            find target/${{ matrix.target }}/release -maxdepth 1 -name '*.exe' -type f \
+              ! -name '*.d' ! -name 'build-script-*' \
+              -exec cp {} target/dist/ \;
+          else
+            # Copy only the known workspace binaries (no .d files, no build scripts)
+            for dir in crates/*/; do
+              bin=$(basename "$dir")
+              src="target/${{ matrix.target }}/release/$bin"
+              if [ -f "$src" ] && [ -x "$src" ]; then
+                cp "$src" target/dist/
+              fi
+            done
+            # Copy the main mush binary
+            src="target/${{ matrix.target }}/release/mush"
+            if [ -f "$src" ] && [ -x "$src" ]; then
+              cp "$src" target/dist/
+            fi
+          fi
+          echo "Collected $(ls target/dist | wc -l) binaries:"
+          ls target/dist
+
+      - name: Extract version
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # ── Windows-only: NSIS installers ──────────────────────────────
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        run: choco install nsis -y
+
+      - name: Build NSIS installers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+
+          # Update APP_VERSION in both NSIS scripts
+          foreach ($file in @("nsis\installer.nsis", "nsis\updater.nsis")) {
+              (Get-Content $file) -replace '!define APP_VERSION\s+"[^"]+"', "!define APP_VERSION `"$version`"" |
+                  Set-Content $file
+          }
+
+          $nsis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          & $nsis nsis\installer.nsis
+          if ($LASTEXITCODE -ne 0) { throw "installer.nsis failed" }
+          & $nsis nsis\updater.nsis
+          if ($LASTEXITCODE -ne 0) { throw "updater.nsis failed" }
+
+          Write-Host "Built installers:"
+          Get-ChildItem target\mush-*-setup.exe, target\mush-*-update.exe | ForEach-Object { Write-Host "  $_" }
+
+      # ── Portable archive ───────────────────────────────────────────
+      - name: Create portable archive (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "mush-${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}.zip"
+          Compress-Archive -Path target\dist\* -DestinationPath "target\$name"
+          Write-Host "Created $name"
+
+      - name: Create portable archive (tar.gz)
+        if: runner.os != 'Windows'
+        run: |
+          name="mush-${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}.tar.gz"
+          tar -czf "target/$name" -C target/dist .
+          echo "Created $name"
+
+      # ── Upload ─────────────────────────────────────────────────────
+      - name: Upload portable archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            target/mush-*-${{ matrix.artifact_name }}.*
+
+      - name: Upload NSIS installers
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            target/mush-*-setup.exe
+            target/mush-*-update.exe
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List release assets
+        run: find artifacts -type f | sort
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ""
+          files: |
+            artifacts/mush-*-setup.exe
+            artifacts/mush-*-update.exe
+            artifacts/mush-*.zip
+            artifacts/mush-*.tar.gz
