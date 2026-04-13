@@ -32,3 +32,6 @@ updater: package
 
 install:
     cargo install --bin mush --path ./mush/
+
+act:
+    gh act -P ubuntu-latest=catthehacker/ubuntu:runner-latest -P macos-13=catthehacker/ubuntu:runner-latest -P macos-latest=catthehacker/ubuntu:runner-latest --container-options "--memory=16g"
