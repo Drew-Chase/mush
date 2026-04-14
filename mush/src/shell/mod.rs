@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 
+/// The resolved type of a command after name lookup.
 #[derive(Debug)]
 pub enum CommandKind {
     Builtin(builtins::BuiltinCommand),
@@ -216,6 +217,8 @@ pub fn tokenize(input: &str) -> Vec<String> {
     tokens
 }
 
+/// Returns `true` if the command is known to be interactive (TUI/REPL) and should
+/// be given direct terminal control instead of captured output.
 pub fn is_interactive(cmd_name: &str, args: &[String]) -> bool {
     const NON_INTERACTIVE_FLAGS: &[&str] = &["--help", "-h", "-?", "--version", "-V"];
     if args.iter().any(|a| NON_INTERACTIVE_FLAGS.contains(&a.as_str())) {

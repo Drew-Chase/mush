@@ -536,6 +536,7 @@ fn is_glob_char(c: char) -> bool {
 
 // ── Parser ──────────────────────────────────────────────────────────────────
 
+/// Parses a shell input string into a [`CommandLine`] AST.
 pub fn parse(input: &str) -> Result<CommandLine, ParseError> {
     let mut lexer = Lexer::new(input);
     let tokens = lexer.tokenize_all()?;

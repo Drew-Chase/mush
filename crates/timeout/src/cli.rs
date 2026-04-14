@@ -56,7 +56,7 @@ pub struct TimeoutConfig {
     #[arg(skip)]
     pub command: Vec<String>,
 
-    /// Positional: DURATION COMMAND [ARG]...
+    /// Positional: DURATION COMMAND \[ARG\]...
     #[arg(required = true, trailing_var_arg = true)]
     pub args: Vec<String>,
 }

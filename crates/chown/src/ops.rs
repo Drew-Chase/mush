@@ -2,7 +2,7 @@ use std::io;
 
 use crate::cli::ChownConfig;
 
-/// Parse an OWNER[:GROUP] string into (Option<owner>, Option<group>).
+/// Parses an ownership spec like `user:group` into optional owner and group parts.
 pub fn parse_owner_group(spec: &str) -> (Option<&str>, Option<&str>) {
     if spec.is_empty() {
         return (None, None);

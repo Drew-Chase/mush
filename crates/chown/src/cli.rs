@@ -35,10 +35,10 @@ pub struct ChownConfig {
     #[arg(long = "reference")]
     pub reference: Option<String>,
 
-    /// Owner[:group] and files (first arg is owner_group unless --reference is used)
+    /// `Owner[:group]` and files (first arg is owner_group unless --reference is used)
     pub files: Vec<String>,
 
-    /// Owner[:group] specification (populated from first positional when --reference is absent)
+    /// `Owner[:group]` specification (populated from first positional when --reference is absent)
     #[arg(skip)]
     pub owner_group: String,
 }

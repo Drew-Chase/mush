@@ -1,11 +1,12 @@
 [package]
 name = "mush"
-version = "0.1.0"
-edition = "2024"
 description = "A fully cross-platform shell interpreter and drop-in replacement for PowerShell, BASH, and ZSH"
-authors = ["Drew Chase <dcmanproductions@gmail.com>"]
-license = "MIT"
-repository = "https://github.com/drew-chase/mush"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
 keywords = ["shell", "terminal", "tui", "cross-platform"]
 categories = ["command-line-utilities"]
 

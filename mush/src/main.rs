@@ -1,3 +1,9 @@
+//! Mush - Multi-Unified Shell
+//!
+//! A cross-platform shell interpreter with a TUI interface, 78 bundled Unix utilities,
+//! and smart autocomplete. Built with [Ratatui](https://ratatui.rs) for live-streaming
+//! terminal output.
+
 mod config;
 mod db;
 mod shell;

@@ -20,10 +20,13 @@ pub struct Chain {
     pub background: bool,
 }
 
+/// The operator connecting two pipelines in a chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChainOp {
-    And, // &&
-    Or,  // ||
+    /// `&&` — execute next only if previous succeeded.
+    And,
+    /// `||` — execute next only if previous failed.
+    Or,
 }
 
 /// One or more simple commands connected by `|`.
@@ -50,6 +53,7 @@ pub struct Word {
 }
 
 impl Word {
+    /// Creates a word containing a single literal string segment.
     pub fn literal(s: &str) -> Self {
         Self {
             parts: vec![WordPart::Literal(s.to_string())],
@@ -96,6 +100,7 @@ impl Word {
     }
 }
 
+/// A segment of a [`Word`], tracking quoting context for expansion.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WordPart {
     /// Plain text.
@@ -118,12 +123,14 @@ pub enum WordPart {
     ProcessSubstitution(String),
 }
 
+/// A variable reference with an optional modifier (e.g. `${VAR:-default}`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct VarRef {
     pub name: String,
     pub modifier: Option<VarModifier>,
 }
 
+/// Modifier applied to a braced variable expansion (`${VAR:op}`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum VarModifier {
     /// `${VAR:-default}` — use default if unset or empty.
@@ -136,12 +143,14 @@ pub enum VarModifier {
     Error(String),
 }
 
+/// An I/O redirection attached to a command.
 #[derive(Debug, Clone)]
 pub struct Redirect {
     pub kind: RedirectKind,
     pub target: Word,
 }
 
+/// The kind and direction of an I/O redirection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RedirectKind {
     /// `>`

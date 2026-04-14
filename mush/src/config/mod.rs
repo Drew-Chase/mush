@@ -11,6 +11,7 @@ use std::sync::{OnceLock, RwLock, RwLockReadGuard};
 
 static CONFIG: OnceLock<RwLock<Config>> = OnceLock::new();
 
+/// Global shell configuration loaded from TOML on startup.
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct Config {
     #[serde(skip)]
@@ -100,6 +101,7 @@ impl Config {
         Ok(result)
     }
 
+    /// Returns the path to the SQLite history database, derived from the config file location.
     pub fn db_path(&self) -> PathBuf {
         self._save_path
             .as_ref()

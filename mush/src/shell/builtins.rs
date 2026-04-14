@@ -7,6 +7,7 @@ use super::help_parser::{CommandOption, OptionKind};
 static DIR_STACK: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 static SHELL_OPTIONS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
+/// All shell builtin commands recognized by mush.
 #[derive(Debug, Clone, Copy)]
 pub enum BuiltinCommand {
     Cd,
@@ -41,6 +42,7 @@ pub enum BuiltinCommand {
 }
 
 impl BuiltinCommand {
+    /// Returns the canonical name of this builtin (e.g. `"cd"`, `"export"`).
     pub fn name(&self) -> &'static str {
         match self {
             Self::Cd => "cd",
@@ -75,6 +77,7 @@ impl BuiltinCommand {
         }
     }
 
+    /// Returns a short description of what this builtin does.
     pub fn description(&self) -> &'static str {
         match self {
             Self::Cd => "Change working directory",
@@ -109,6 +112,7 @@ impl BuiltinCommand {
         }
     }
 
+    /// Returns alternate names for this builtin (e.g. `"cls"` for `clear`).
     pub fn aliases(&self) -> &'static [&'static str] {
         match self {
             Self::Clear => &["cls"],
@@ -119,6 +123,7 @@ impl BuiltinCommand {
         }
     }
 
+    /// Returns the complete list of all builtin commands.
     pub fn all() -> &'static [BuiltinCommand] {
         &[
             Self::Cd, Self::Clear, Self::Exit, Self::Scripts, Self::Pwd,
@@ -130,6 +135,7 @@ impl BuiltinCommand {
         ]
     }
 
+    /// Returns the flags and arguments this builtin accepts, for `--help` output and autocomplete.
     pub fn help_options(&self) -> Vec<CommandOption> {
         let flag = |name: &str, desc: &str| CommandOption {
             name: name.into(),
@@ -276,6 +282,7 @@ impl BuiltinCommand {
         }
     }
 
+    /// Formats a human-readable help text for this builtin.
     pub fn help_text(&self) -> Vec<String> {
         let mut lines = Vec::new();
         let name = self.name();
@@ -308,6 +315,7 @@ impl BuiltinCommand {
     }
 }
 
+/// The outcome of executing a builtin command.
 pub struct BuiltinResult {
     pub output: Vec<String>,
     pub exit_app: bool,
@@ -315,6 +323,7 @@ pub struct BuiltinResult {
     pub exit_code: i32,
 }
 
+/// Looks up a builtin command by name (case-insensitive), including aliases.
 pub fn lookup(name: &str) -> Option<BuiltinCommand> {
     match name.to_lowercase().as_str() {
         "cd" => Some(BuiltinCommand::Cd),
@@ -350,10 +359,12 @@ pub fn lookup(name: &str) -> Option<BuiltinCommand> {
     }
 }
 
+/// Executes a builtin command with the given arguments.
 pub fn execute(cmd: BuiltinCommand, args: &[String]) -> BuiltinResult {
     execute_with_stdin(cmd, args, None)
 }
 
+/// Executes a builtin command with the given arguments and optional piped stdin data.
 pub fn execute_with_stdin(cmd: BuiltinCommand, args: &[String], stdin_data: Option<&[u8]>) -> BuiltinResult {
     // Intercept --help (skip for `test` where flags like -h have real meaning)
     if !matches!(cmd, BuiltinCommand::Test)
@@ -1543,6 +1554,7 @@ fn set_shell_option(name: &str, enabled: bool) {
 }
 
 /// Check if a shell option is enabled (for use by other modules).
+/// Returns `true` if the given shell option name is currently set.
 #[allow(dead_code)]
 pub fn has_option(name: &str) -> bool {
     let guard = SHELL_OPTIONS.lock().unwrap();

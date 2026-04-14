@@ -12,6 +12,7 @@ pub struct ShellEnv {
 
 const MAX_SUBSTITUTION_DEPTH: u32 = 64;
 
+/// Errors that can occur during variable and command substitution expansion.
 #[derive(Debug)]
 pub enum ExpansionError {
     /// `${VAR:?msg}` when VAR is unset or empty.
