@@ -34,6 +34,7 @@ struct ExecResult {
 
 enum OutputChunk {
     Data(String),
+    Stderr(String),
     Error(String),
 }
 
@@ -1093,7 +1094,8 @@ impl App {
             loop {
                 match running.rx.try_recv() {
                     Ok(OutputChunk::Data(text)) => running.buffer.push(&text),
-                    Ok(OutputChunk::Error(msg)) => running.buffer.push(&format!("[error: {msg}]")),
+                    Ok(OutputChunk::Stderr(text)) => running.buffer.push(&format!("\x1b[31m{text}\x1b[0m")),
+                    Ok(OutputChunk::Error(msg)) => running.buffer.push(&format!("\x1b[31m[error: {msg}]\x1b[0m")),
                     Err(TryRecvError::Empty) => {
                         std::thread::sleep(Duration::from_millis(1));
                         continue;
@@ -1182,7 +1184,7 @@ impl App {
                         Ok(0) => break,
                         Ok(n) => {
                             let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                            if tx_err.send(OutputChunk::Data(text)).is_err() {
+                            if tx_err.send(OutputChunk::Stderr(text)).is_err() {
                                 break;
                             }
                         }
@@ -1243,8 +1245,12 @@ impl App {
                 Ok(OutputChunk::Data(text)) => {
                     running.buffer.push(&text);
                 }
+                Ok(OutputChunk::Stderr(text)) => {
+                    // Wrap stderr text in red ANSI codes for visual distinction
+                    running.buffer.push(&format!("\x1b[31m{text}\x1b[0m"));
+                }
                 Ok(OutputChunk::Error(msg)) => {
-                    running.buffer.push(&format!("[error: {msg}]"));
+                    running.buffer.push(&format!("\x1b[31m[error: {msg}]\x1b[0m"));
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {

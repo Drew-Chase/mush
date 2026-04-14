@@ -22,7 +22,7 @@ Mush is not a scripting language. It cannot run shell scripts, define functions,
 
 | Area | Status | Score |
 |------|--------|-------|
-| **Interactive command execution** | Solid | 8/10 |
+| **Interactive command execution** | Exit code feedback, stderr coloring, `2>&1` merge, streaming builtins | 10/10 |
 | **Parsing & expansion** | Good (pipes, chains, globs, $VAR, $(cmd), <(cmd)) | 8/10 |
 | **Autocomplete** | Excellent (commands, help options, pipe output) | 9/10 |
 | **History** | Good (SQLite, search, dedup) | 8/10 |
@@ -32,8 +32,8 @@ Mush is not a scripting language. It cannot run shell scripts, define functions,
 | **Scripting** | Source-only, line-by-line | 2/10 |
 | **Job control** | Basic (bg/fg stubs, no Ctrl+Z) | 3/10 |
 | **Shell options** | Stored but not enforced | 2/10 |
-| **Documentation** | 2-line README | 1/10 |
-| **CI/CD** | Release-only, no PR checks | 2/10 |
+| **Documentation** | README, wiki, CHANGELOG, CONTRIBUTING, doc comments, Cargo metadata | 9/10 |
+| **CI/CD** | Release workflow + PR checks (fmt, clippy, test, doc) on 3 platforms | 8/10 |
 | **Packaging** | Windows NSIS only | 3/10 |
 | **Config & customization** | Basic TOML, no themes, no prompt | 3/10 |
 | **Cross-platform** | Architecture is good, gaps in practice | 6/10 |

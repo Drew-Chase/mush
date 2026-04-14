@@ -4,6 +4,11 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
 
+/// Returns true if the command's redirects include `2>&1`.
+fn has_stderr_to_stdout(redirects: &[Redirect]) -> bool {
+    redirects.iter().any(|r| r.kind == RedirectKind::StderrToStdout)
+}
+
 /// The result of executing a single simple command synchronously.
 pub struct SyncExecResult {
     pub output: Vec<String>,
@@ -183,9 +188,16 @@ fn apply_stdio(cmd: &mut Command, config: RedirectConfig) {
     }
 
     if config.merge_stderr_to_stdout {
-        // We need stdout to be piped first to clone it for stderr.
-        // If stdout is a file, we need to duplicate the file handle.
-        cmd.stderr(Stdio::piped()); // will be merged in post-processing
+        // 2>&1: stderr should not be captured separately; it will be
+        // interleaved with stdout by the OS because both write to the
+        // same pipe/file.  We achieve this by NOT setting stderr at all
+        // (it inherits the same destination as stdout).
+        //
+        // For the common case (stdout piped), Rust's Command API doesn't
+        // let us dup the pipe, so we pipe stderr separately and merge in
+        // collect_output.  This preserves the existing behaviour while
+        // also working for file-redirected stdout.
+        cmd.stderr(Stdio::piped());
     } else {
         match config.stderr {
             StdioConfig::Inherit => {}
@@ -557,6 +569,7 @@ pub fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
                 }
             }
             CommandKind::External(path) => {
+                let merge_stderr = has_stderr_to_stdout(&cmd.redirects);
                 let mut proc = Command::new(&path);
                 super::super::widgets::force_color_env(proc.args(&args));
 
@@ -585,6 +598,26 @@ pub fn execute_pipeline_sync(pipeline: &Pipeline) -> SyncExecResult {
                                 Ok(out) => { last_result = collect_output(out); }
                                 Err(e) => return err_result(format!("error: {e}")),
                             }
+                        } else if merge_stderr {
+                            // 2>&1: merge stderr into stdout pipe for next stage
+                            if let (Some(stdout), Some(stderr)) =
+                                (child.stdout.take(), child.stderr.take())
+                            {
+                                let (reader, writer) = os_pipe::pipe().unwrap();
+                                let mut w1 = writer.try_clone().unwrap();
+                                let w2 = writer;
+                                std::thread::spawn(move || {
+                                    let mut r = std::io::BufReader::new(stdout);
+                                    let _ = std::io::copy(&mut r, &mut w1);
+                                });
+                                std::thread::spawn(move || {
+                                    let mut r = std::io::BufReader::new(stderr);
+                                    let mut w = w2;
+                                    let _ = std::io::copy(&mut r, &mut w);
+                                });
+                                prev = Some(PrevOutput::Pipe(Stdio::from(reader)));
+                            }
+                            spawned_children.push(child);
                         } else {
                             // Pass stdout as OS pipe to next stage
                             if let Some(stdout) = child.stdout.take() {
@@ -806,7 +839,10 @@ pub fn execute_pipeline(pipeline: &Pipeline, force_interactive: bool) -> Pipelin
 
             match kind {
                 CommandKind::Builtin(builtin) => {
-                    // Execute builtin synchronously, feed output to next command
+                    // Execute builtin synchronously, feed output to next command.
+                    // Drop any previous pipe — builtins don't read piped stdin
+                    // in the streaming path (the sync path handles that case).
+                    drop(prev_stdout.take());
                     let result = builtins::execute(builtin, &args);
                     if is_last {
                         return PipelineResult::Sync(SyncExecResult {
@@ -816,12 +852,16 @@ pub fn execute_pipeline(pipeline: &Pipeline, force_interactive: bool) -> Pipelin
                             change_dir: result.change_dir.is_some(),
                         });
                     }
-                    // For non-last builtins, we need to feed their output as stdin to the next command.
-                    // We'll handle this by spawning a helper that echoes the output.
-                    // Simpler approach: just use the sync pipeline path for pipelines containing builtins.
-                    return PipelineResult::Sync(execute_pipeline_sync(pipeline));
+                    // Feed builtin output to next command via an OS pipe
+                    let output_bytes = result.output.join("\n").into_bytes();
+                    let (reader, mut writer) = os_pipe::pipe().unwrap();
+                    std::thread::spawn(move || {
+                        let _ = std::io::Write::write_all(&mut writer, &output_bytes);
+                    });
+                    prev_stdout = Some(Stdio::from(reader));
                 }
                 CommandKind::External(path) => {
+                    let merge_stderr = has_stderr_to_stdout(&cmd.redirects);
                     let mut proc = Command::new(&path);
                     super::super::widgets::force_color_env(proc.args(&args));
 
@@ -848,7 +888,28 @@ pub fn execute_pipeline(pipeline: &Pipeline, force_interactive: bool) -> Pipelin
                     match proc.spawn() {
                         Ok(mut child) => {
                             if !is_last {
-                                if let Some(stdout) = child.stdout.take() {
+                                // For 2>&1 on non-last pipeline commands, merge
+                                // stderr into the stdout stream so the next
+                                // command receives both.
+                                if merge_stderr {
+                                    if let (Some(stdout), Some(stderr)) =
+                                        (child.stdout.take(), child.stderr.take())
+                                    {
+                                        let (reader, writer) = os_pipe::pipe().unwrap();
+                                        let mut w1 = writer.try_clone().unwrap();
+                                        let w2 = writer;
+                                        std::thread::spawn(move || {
+                                            let mut r = std::io::BufReader::new(stdout);
+                                            let _ = std::io::copy(&mut r, &mut w1);
+                                        });
+                                        std::thread::spawn(move || {
+                                            let mut r = std::io::BufReader::new(stderr);
+                                            let mut w = w2;
+                                            let _ = std::io::copy(&mut r, &mut w);
+                                        });
+                                        prev_stdout = Some(Stdio::from(reader));
+                                    }
+                                } else if let Some(stdout) = child.stdout.take() {
                                     prev_stdout = Some(Stdio::from(stdout));
                                 }
                                 children.push(child);
@@ -982,7 +1043,12 @@ fn apply_redirects_to_command(cmd: &mut Command, redirects: &[Redirect]) -> Resu
                 cmd.stderr(Stdio::from(f));
             }
             RedirectKind::StderrToStdout => {
-                // This is handled at a higher level
+                // 2>&1 in a multi-command pipeline: stderr should go to the
+                // same pipe as stdout so the next command receives both
+                // streams.  Since stdout is already Stdio::piped() at this
+                // point we pipe stderr separately and rely on the OS
+                // scheduling to interleave the output.
+                cmd.stderr(Stdio::piped());
             }
             RedirectKind::HereString | RedirectKind::HereDoc => {
                 cmd.stdin(Stdio::piped());

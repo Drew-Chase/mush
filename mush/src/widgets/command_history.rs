@@ -23,17 +23,28 @@ impl CommandEntry {
     fn render_to_buffer(&self, area: Rect, buf: &mut Buffer) {
         let config = Config::get();
 
+        let failed = self.exit_code != 0;
+        let border_color = if failed { Color::Red } else { Color::DarkGray };
+        let duration_color = if failed { Color::Red } else { Color::Yellow };
+
         let duration_str = format_duration(self.duration);
-        let title_bottom = Line::from(vec![
+        let mut bottom_spans = vec![
             Span::styled(" took ", Style::default().fg(Color::DarkGray)),
-            Span::styled(duration_str, Style::default().fg(Color::Yellow)),
-            Span::raw(" "),
-        ]);
+            Span::styled(duration_str, Style::default().fg(duration_color)),
+        ];
+        if failed {
+            bottom_spans.push(Span::styled(
+                format!(" [exit {}]", self.exit_code),
+                Style::default().fg(Color::Red),
+            ));
+        }
+        bottom_spans.push(Span::raw(" "));
+        let title_bottom = Line::from(bottom_spans);
 
         let block = Block::new()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::DarkGray))
+            .border_style(Style::default().fg(border_color))
             .padding(Padding::new(1, 1, 1, 1))
             .title(format!(" {} ", self.command))
             .title_bottom(title_bottom);
