@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/arch", "crates/awk", "crates/base64", "crates/basename", "crates/bc", "crates/cat", "crates/chgrp", "crates/chmod", "crates/chown", "crates/column", "crates/comm", "crates/cp", "crates/cut", "crates/date", "crates/df", "crates/diff", "crates/dirname", "crates/du", "crates/echo", "crates/expand", "crates/file", "crates/find", "crates/fmt", "crates/fold", "crates/free", "crates/grep", "crates/head", "crates/hostname", "crates/id", "crates/install", "crates/join", "crates/kill", "crates/less", "crates/ln", "crates/ls", "crates/md5sum", "crates/mkdir", "crates/mktemp", "crates/more", "crates/mv", "crates/nohup", "crates/nproc", "crates/paste", "crates/patch", "crates/pgrep", "crates/pkill", "crates/ps", "crates/readlink", "crates/realpath", "crates/reset", "crates/rev", "crates/rm", "crates/sed", "crates/seq", "crates/sha256sum", "crates/shuf", "crates/sleep", "crates/sort", "crates/stat", "crates/strings", "crates/su", "crates/sudo", "crates/tail", "crates/tee", "crates/timeout", "crates/touch", "crates/tput", "crates/tr", "crates/tree", "crates/uname", "crates/unexpand", "crates/uniq", "crates/uptime", "crates/wc", "crates/whoami", "crates/xargs", "crates/xxd", "crates/yes", "mush"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Drew Chase <dcmanproductions@gmail.com>"]
 license = "MIT"

@@ -39,6 +39,9 @@ pub enum BuiltinCommand {
     Wait,
     Expr,
     Umask,
+    Help,
+    Echo,
+    Kill,
 }
 
 impl BuiltinCommand {
@@ -74,6 +77,9 @@ impl BuiltinCommand {
             Self::Wait => "wait",
             Self::Expr => "expr",
             Self::Umask => "umask",
+            Self::Help => "help",
+            Self::Echo => "echo",
+            Self::Kill => "kill",
         }
     }
 
@@ -109,6 +115,9 @@ impl BuiltinCommand {
             Self::Wait => "Wait for background jobs",
             Self::Expr => "Evaluate expression",
             Self::Umask => "Set file creation mask",
+            Self::Help => "List all builtins or show help for a specific builtin",
+            Self::Echo => "Display a line of text",
+            Self::Kill => "Send a signal to a process",
         }
     }
 
@@ -131,7 +140,8 @@ impl BuiltinCommand {
             Self::Unalias, Self::Type, Self::History, Self::Source, Self::Read,
             Self::Test, Self::True, Self::False, Self::Printenv, Self::Pushd,
             Self::Popd, Self::Set, Self::Jobs, Self::Fg, Self::Bg, Self::Dirs,
-            Self::Wait, Self::Expr, Self::Umask,
+            Self::Wait, Self::Expr, Self::Umask, Self::Help, Self::Echo,
+            Self::Kill,
         ]
     }
 
@@ -168,7 +178,10 @@ impl BuiltinCommand {
                 sub("-", "Previous directory (OLDPWD)"),
                 sub("<directory>", "Directory to change to"),
             ],
-            Self::Clear | Self::Exit | Self::True | Self::False => vec![],
+            Self::Clear | Self::True | Self::False => vec![],
+            Self::Exit => vec![
+                sub("<N>", "Exit with status N (default 0)"),
+            ],
             Self::Scripts => vec![
                 sub("new", "Create a new script from template"),
                 sub("reload", "Reload all scripts"),
@@ -279,6 +292,20 @@ impl BuiltinCommand {
                 flag("-p", "Show in reusable format"),
                 sub("<MODE>", "Octal mode to set (e.g. 022)"),
             ],
+            Self::Help => vec![
+                sub("<COMMAND>", "Show help for a specific builtin"),
+            ],
+            Self::Echo => vec![
+                flag("-n", "Do not output trailing newline"),
+                flag("-e", "Interpret escape sequences"),
+                flag("-E", "Disable escape interpretation (default)"),
+            ],
+            Self::Kill => vec![
+                flag("-l", "List signal names"),
+                flag_arg("-s", "Specify signal to send", "SIGNAL"),
+                flag("-9", "Send SIGKILL"),
+                sub("<PID>", "Process ID to signal"),
+            ],
         }
     }
 
@@ -355,6 +382,9 @@ pub fn lookup(name: &str) -> Option<BuiltinCommand> {
         "wait" => Some(BuiltinCommand::Wait),
         "expr" => Some(BuiltinCommand::Expr),
         "umask" => Some(BuiltinCommand::Umask),
+        "help" => Some(BuiltinCommand::Help),
+        "echo" => Some(BuiltinCommand::Echo),
+        "kill" => Some(BuiltinCommand::Kill),
         _ => None,
     }
 }
@@ -377,12 +407,17 @@ pub fn execute_with_stdin(cmd: BuiltinCommand, args: &[String], stdin_data: Opti
     match cmd {
         BuiltinCommand::Cd => execute_cd(args),
         BuiltinCommand::Clear => ok(Vec::new()),
-        BuiltinCommand::Exit => BuiltinResult {
-            output: Vec::new(),
-            exit_app: true,
-            change_dir: None,
-            exit_code: 0,
-        },
+        BuiltinCommand::Exit => {
+            let code = args.first()
+                .and_then(|a| a.parse::<i32>().ok())
+                .unwrap_or(0);
+            BuiltinResult {
+                output: Vec::new(),
+                exit_app: true,
+                change_dir: None,
+                exit_code: code,
+            }
+        }
         BuiltinCommand::Scripts => execute_scripts(args),
         BuiltinCommand::Pwd => execute_pwd(args),
         BuiltinCommand::Export => execute_export(args),
@@ -414,6 +449,9 @@ pub fn execute_with_stdin(cmd: BuiltinCommand, args: &[String], stdin_data: Opti
         BuiltinCommand::Dirs => execute_dirs(args),
         BuiltinCommand::Expr => execute_expr(args),
         BuiltinCommand::Umask => execute_umask(args),
+        BuiltinCommand::Help => execute_help(args),
+        BuiltinCommand::Echo => execute_echo(args),
+        BuiltinCommand::Kill => execute_kill(args),
     }
 }
 
@@ -2022,5 +2060,227 @@ pub(crate) fn home_dir() -> Option<PathBuf> {
     #[cfg(not(windows))]
     {
         std::env::var("HOME").ok().map(PathBuf::from)
+    }
+}
+
+// ── help ────────────────────────────────────────────────────────────────────
+
+fn execute_help(args: &[String]) -> BuiltinResult {
+    if args.is_empty() {
+        let mut lines = vec!["Shell builtins:".to_string(), String::new()];
+        for b in BuiltinCommand::all() {
+            lines.push(format!("  {:<12} {}", b.name(), b.description()));
+        }
+        lines.push(String::new());
+        lines.push("Type 'help <command>' for more information.".to_string());
+        return ok(lines);
+    }
+    let name = &args[0];
+    match lookup(name) {
+        Some(cmd) => ok(cmd.help_text()),
+        None => fail(format!("help: no help topics match '{name}'")),
+    }
+}
+
+// ── echo ────────────────────────────────────────────────────────────────────
+
+fn execute_echo(args: &[String]) -> BuiltinResult {
+    let mut no_newline = false;
+    let mut interpret_escapes = false;
+    let mut positional_start = 0;
+
+    for (i, arg) in args.iter().enumerate() {
+        if !arg.starts_with('-') || arg == "-" || arg == "--" {
+            break;
+        }
+        let flag_chars = &arg[1..];
+        if flag_chars.is_empty() || !flag_chars.chars().all(|c| matches!(c, 'n' | 'e' | 'E')) {
+            break;
+        }
+        for c in flag_chars.chars() {
+            match c {
+                'n' => no_newline = true,
+                'e' => interpret_escapes = true,
+                'E' => interpret_escapes = false,
+                _ => {}
+            }
+        }
+        positional_start = i + 1;
+    }
+
+    let text = args[positional_start..].join(" ");
+    let output = if interpret_escapes {
+        echo_interpret_escapes(&text)
+    } else {
+        text
+    };
+
+    // For -n, we still return the text but mark it. In TUI mode, the
+    // difference is invisible. In script mode, the caller can handle it.
+    let lines: Vec<String> = if output.is_empty() && no_newline {
+        Vec::new()
+    } else {
+        output.lines().map(String::from).collect()
+    };
+    ok(lines)
+}
+
+fn echo_interpret_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('\\') => out.push('\\'),
+            Some('a') => out.push('\x07'),
+            Some('b') => out.push('\x08'),
+            Some('f') => out.push('\x0C'),
+            Some('v') => out.push('\x0B'),
+            Some('e') => out.push('\x1B'),
+            Some('0') => {
+                // Octal: \0NNN (up to 3 digits)
+                let mut val = 0u32;
+                for _ in 0..3 {
+                    if let Some(&d) = chars.clone().peekable().peek() {
+                        if d.is_ascii_digit() && d < '8' {
+                            val = val * 8 + (d as u32 - '0' as u32);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                if let Some(ch) = char::from_u32(val) {
+                    out.push(ch);
+                }
+            }
+            Some('c') => break, // \c = stop output
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+// ── kill ────────────────────────────────────────────────────────────────────
+
+fn execute_kill(args: &[String]) -> BuiltinResult {
+    if args.is_empty() {
+        return fail("kill: usage: kill [-s SIGNAL | -SIGNAL] PID...".to_string());
+    }
+
+    // Handle -l (list signals)
+    if args.len() == 1 && (args[0] == "-l" || args[0] == "-L") {
+        return ok(vec![
+            "HUP INT QUIT ILL TRAP ABRT BUS FPE KILL USR1".to_string(),
+            "SEGV USR2 PIPE ALRM TERM STKFLT CHLD CONT STOP TSTP".to_string(),
+            "TTIN TTOU URG XCPU XFSZ VTALRM PROF WINCH POLL PWR SYS".to_string(),
+        ]);
+    }
+
+    // Parse signal and PIDs
+    let mut signal = 15i32; // SIGTERM default
+    let mut pids: Vec<u32> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-s" || arg == "--signal" {
+            i += 1;
+            if i >= args.len() {
+                return fail("kill: -s requires a signal name".to_string());
+            }
+            signal = parse_signal_name(&args[i]);
+            if signal < 0 {
+                return fail(format!("kill: unknown signal: {}", args[i]));
+            }
+        } else if arg.starts_with('-') && arg.len() > 1 {
+            let sig_str = &arg[1..];
+            let parsed = parse_signal_name(sig_str);
+            if parsed >= 0 {
+                signal = parsed;
+            } else {
+                return fail(format!("kill: unknown signal: {sig_str}"));
+            }
+        } else {
+            match arg.parse::<u32>() {
+                Ok(pid) => pids.push(pid),
+                Err(_) => return fail(format!("kill: invalid PID: {arg}")),
+            }
+        }
+        i += 1;
+    }
+
+    if pids.is_empty() {
+        return fail("kill: no PID specified".to_string());
+    }
+
+    let mut errors = Vec::new();
+    for pid in &pids {
+        if let Err(e) = kill_process(*pid, signal) {
+            errors.push(format!("kill: ({pid}) - {e}"));
+        }
+    }
+
+    if errors.is_empty() {
+        ok(Vec::new())
+    } else {
+        BuiltinResult {
+            output: errors,
+            exit_app: false,
+            change_dir: None,
+            exit_code: 1,
+        }
+    }
+}
+
+fn parse_signal_name(s: &str) -> i32 {
+    // Try numeric first
+    if let Ok(n) = s.parse::<i32>() {
+        return n;
+    }
+    let upper = s.to_uppercase();
+    let name = upper.strip_prefix("SIG").unwrap_or(&upper);
+    match name {
+        "HUP" => 1, "INT" => 2, "QUIT" => 3, "ILL" => 4, "TRAP" => 5,
+        "ABRT" | "IOT" => 6, "BUS" => 7, "FPE" => 8, "KILL" => 9, "USR1" => 10,
+        "SEGV" => 11, "USR2" => 12, "PIPE" => 13, "ALRM" => 14, "TERM" => 15,
+        "CHLD" => 17, "CONT" => 18, "STOP" => 19, "TSTP" => 20,
+        _ => -1,
+    }
+}
+
+#[cfg(unix)]
+fn kill_process(pid: u32, signal: i32) -> Result<(), String> {
+    let ret = unsafe { libc::kill(pid as i32, signal) };
+    if ret == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error().to_string())
+    }
+}
+
+#[cfg(windows)]
+fn kill_process(pid: u32, _signal: i32) -> Result<(), String> {
+    // Windows: use taskkill for forceful termination
+    let output = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(stderr.trim().to_string())
     }
 }

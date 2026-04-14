@@ -29,7 +29,7 @@ Mush is not a scripting language. It cannot run shell scripts, define functions,
 | **TUI** | Good (live output, ANSI support, mouse, clipboard) | 8/10 |
 | **Bundled utilities** | 78 crates, core utils solid | 7/10 |
 | **Control flow** | None | 0/10 |
-| **Scripting** | Source-only, line-by-line | 2/10 |
+| **Scripting** | Script files, `-c` flag, startup files, shebang | 5/10 |
 | **Job control** | Basic (bg/fg stubs, no Ctrl+Z) | 3/10 |
 | **Shell options** | Stored but not enforced | 2/10 |
 | **Documentation** | README, wiki, CHANGELOG, CONTRIBUTING, doc comments, Cargo metadata | 9/10 |
@@ -92,7 +92,7 @@ Mush is not a scripting language. It cannot run shell scripts, define functions,
 *Goal: Make the project credible. CI, docs, and basic scripting.*
 
 #### CI/CD Pipeline
-- [ ] Add `.github/workflows/ci.yml` — run on every push and PR:
+- [x] Add `.github/workflows/ci.yml` — run on every push and PR:
   - `cargo fmt --check`
   - `cargo clippy -- -D warnings`
   - `cargo test` (all workspace members)
@@ -100,32 +100,32 @@ Mush is not a scripting language. It cannot run shell scripts, define functions,
 - [ ] Add branch protection rules on `master` requiring CI pass
 
 #### Documentation
-- [ ] Rewrite `README.md`:
+- [x] Rewrite `README.md`:
   - Project description and goals
   - Installation instructions (per platform)
   - Feature overview with screenshots
   - Configuration reference
   - Known limitations
   - Contributing section
-- [ ] Add `CHANGELOG.md` (retroactive for 0.1.0)
-- [ ] Add `CONTRIBUTING.md` (build instructions, PR guidelines, code style)
-- [ ] Add built-in `help` command listing all builtins with descriptions
+- [x] Add `CHANGELOG.md` (retroactive for 0.1.0)
+- [x] Add `CONTRIBUTING.md` (build instructions, PR guidelines, code style)
+- [x] Add built-in `help` command listing all builtins with descriptions
 
 #### Startup Files
-- [ ] Source `~/.config/mush/init.mush` (or `~/.mushrc`) on startup if it exists
-- [ ] Source `~/.config/mush/env.mush` for non-interactive (script) mode
+- [x] Source `~/.config/mush/init.mush` (or `~/.mushrc`) on startup if it exists
+- [x] Source `~/.config/mush/env.mush` for non-interactive (script) mode
 - [ ] Document the startup file order
 
 #### Script File Execution
-- [ ] Add `[file]` positional argument to CLI: `mush script.mush`
-- [ ] Add `-c "command"` flag: `mush -c "echo hello"`
-- [ ] Detect and skip shebang lines (`#!/usr/bin/env mush`)
-- [ ] Non-interactive mode: no TUI, execute and exit
-- [ ] Exit code propagation from scripts
+- [x] Add `[file]` positional argument to CLI: `mush script.mush`
+- [x] Add `-c "command"` flag: `mush -c "echo hello"`
+- [x] Detect and skip shebang lines (`#!/usr/bin/env mush`)
+- [x] Non-interactive mode: no TUI, execute and exit
+- [x] Exit code propagation from scripts
 
 #### Quick Wins
-- [ ] Implement `echo` as a builtin (currently falls through to PATH)
-- [ ] Implement `kill` as a builtin (currently falls through to the crate)
+- [x] Implement `echo` as a builtin (currently falls through to PATH)
+- [x] Implement `kill` as a builtin (currently falls through to the crate)
 - [ ] Wire up `read` builtin to stdin in interactive mode (crossterm raw input)
 
 ---
